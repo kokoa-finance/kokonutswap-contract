@@ -12,7 +12,7 @@ import "../library/kip/KIP7Detailed.sol";
 import "../library/AccessControl.sol";
 import "../library/Pausable.sol";
 
-contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
+contract StakedKokonutSwapToken is KIP7Detailed, Pausable, IStakedToken {
     using WadRayMath for uint256;
 
     uint256 public constant PRECISION = 1e12;
@@ -35,13 +35,13 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
     uint256 public constant ACC_REWARD_PRECISION = 1e18;
     uint256 public instantUnstakeFee; // 10000 == 100%
 
-    function __StakedEyeToken_init(
+    function __StakedKokonutSwapToken_init(
         string memory _name,
         string memory _symbol,
         address _EYE,
         uint256 _lockUpPeriod
     ) public initializer {
-        require(_EYE != address(0), "StakedEyeToken::init: zero address");
+        require(_EYE != address(0), "sKOKOS: zero address");
         __Pausable_init();
         __KIP7Detailed_init(_name, _symbol, 18);
         EYE = IKIP7(_EYE);
@@ -52,14 +52,14 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
     function config(bytes32 what, uint256 data) external onlyOwner {
         if (what == "lockUpPeriod") lockUpPeriod = data;
         else if (what == "instantUnstakeFee") {
-            require(data < 10000, "StakedEyeToken::config: invalid param");
+            require(data < 10000, "sKOKOS: invalid param");
             instantUnstakeFee = data;
         } else revert("unrecognized");
     }
 
     function config(bytes32 what, address value) external onlyOwner {
         if (what == "beneficiary") {
-            require(value != address(0), "StakedEyeToken::config: 0 address");
+            require(value != address(0), "sKOKOS: 0 address");
             beneficiary = IBeneficiary(value);
         } else {
             revert("unrecognized");
@@ -71,7 +71,7 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         updateAirdrops();
 
         uint256 amountScaled = _toRawAmount(amount);
-        require(amountScaled != 0, "StakedEyeToken::stake: too small amount");
+        require(amountScaled != 0, "sKOKOS: too small amount");
         _balances[to] = _balances[to] + amountScaled;
         _totalSupply = _totalSupply + amountScaled;
         emit Transfer(address(0), to, amount);
@@ -93,7 +93,7 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         updateAirdrops();
 
         uint256 amountScaled = _toRawAmount(amount);
-        require(amountScaled != 0, "StakedEyeToken::unstake: too small amount");
+        require(amountScaled != 0, "sKOKOS: too small amount");
         _balances[msg.sender] = _balances[msg.sender] - amountScaled;
         _totalSupply = _totalSupply - amountScaled;
         emit Transfer(msg.sender, address(0), amount);
@@ -111,7 +111,7 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         for (uint256 i = 0; i < tokenList.length; i++) {
             address token = tokenList[i];
             uint256 accRewardPerShare = airdropInfo[token].accRewardPerShare;
-            rewardDebt[token][to] -= SafeCast.toInt256((amountScaled * accRewardPerShare) / ACC_REWARD_PRECISION);
+            rewardDebt[token][msg.sender] -= SafeCast.toInt256((amountScaled * accRewardPerShare) / ACC_REWARD_PRECISION);
         }
     }
 
@@ -120,14 +120,14 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         updateAirdrops();
 
         uint256 amountScaled = _toRawAmount(amount);
-        require(amountScaled != 0, "StakedEyeToken::unstake: too small amount");
+        require(amountScaled != 0, "sKOKOS: too small amount");
         _balances[msg.sender] = _balances[msg.sender] - amountScaled;
         _totalSupply = _totalSupply - amountScaled;
         emit Transfer(msg.sender, address(0), amount);
 
         address burner = 0x000000000000000000000000000000000DEad141;
         uint256 feeAmount = (amount * instantUnstakeFee) / 10000;
-        require(instantUnstakeFee > 0, "StakedEyeToken::instantUnstake: invalid instantUnstakeFee");
+        require(instantUnstakeFee > 0, "sKOKOS: invalid instantUnstakeFee");
         EYE.transfer(burner, feeAmount);
         EYE.transfer(to, amount - feeAmount);
         underlyingBalance -= amount;
@@ -137,7 +137,7 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         for (uint256 i = 0; i < tokenList.length; i++) {
             address token = tokenList[i];
             uint256 accRewardPerShare = airdropInfo[token].accRewardPerShare;
-            rewardDebt[token][to] -= SafeCast.toInt256((amountScaled * accRewardPerShare) / ACC_REWARD_PRECISION);
+            rewardDebt[token][msg.sender] -= SafeCast.toInt256((amountScaled * accRewardPerShare) / ACC_REWARD_PRECISION);
         }
     }
 
@@ -155,7 +155,7 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
     }
 
     function claim(address account) external override {
-        require(unstakeCount[account] > 0, "StakedEyeToken::claim: should unstake first");
+        require(unstakeCount[account] > 0, "sKOKOS: should unstake first");
         _release();
         uint256 claimAmount = 0;
 
@@ -218,8 +218,8 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
         address recipient,
         uint256 amount
     ) internal override {
-        require(sender != address(0), "StakedEyeToken::_transfer: transfer from the zero address");
-        require(recipient != address(0), "StakedEyeToken::_transfer: transfer to the zero address");
+        require(sender != address(0), "sKOKOS: transfer from the zero address");
+        require(recipient != address(0), "sKOKOS: transfer to the zero address");
 
         _release();
         uint256 amountScaled = _toRawAmount(amount);
@@ -267,9 +267,9 @@ contract StakedEyeToken is KIP7Detailed, Pausable, IStakedToken {
     function addAirdrop(address token, address treasury) external onlyOwner {
         address[] memory tokenList = _registeredAirdropTokenList;
         for (uint256 i = 0; i < tokenList.length; i++) {
-            require(tokenList[i] != token, "StakedEyeToken::addAirdrop: already registered");
+            require(tokenList[i] != token, "sKOKOS: already registered");
         }
-        require(airdropInfo[token].accRewardPerShare == 0, "StakedEyeToken::addAirdrop: once upon a time..");
+        require(airdropInfo[token].accRewardPerShare == 0, "sKOKOS: once upon a time..");
 
         _registeredAirdropTokenList.push(token);
         airdropInfo[token] = AirdropInfo({treasury: treasury, accRewardPerShare: 0, lastVestedAmount: 0});

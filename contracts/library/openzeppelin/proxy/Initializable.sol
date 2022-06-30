@@ -30,16 +30,22 @@ abstract contract Initializable {
      * @dev Modifier to protect an initializer function from being invoked twice.
      */
     modifier initializer() {
-        require(_initializing || _isConstructor() || !_initialized, "Initializable: contract is already initialized");
+        bool isTopLevelCall = _beforeInitialized();
+        _;
+        _afterInitialized(isTopLevelCall);
+    }
 
-        bool isTopLevelCall = !_initializing;
+    function _beforeInitialized() private returns (bool isTopLevelCall) {
+        require(_initializing || _isConstructor() || !_initialized, "already initialized");
+
+        isTopLevelCall = !_initializing;
         if (isTopLevelCall) {
             _initializing = true;
             _initialized = true;
         }
+    }
 
-        _;
-
+    function _afterInitialized(bool isTopLevelCall) private {
         if (isTopLevelCall) {
             _initializing = false;
         }

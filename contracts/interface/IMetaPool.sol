@@ -2,9 +2,9 @@
 
 pragma solidity ^0.8.3;
 
-import "./IBasePool.sol";
+import "./IStableSwap.sol";
 
-interface IMetaPool is IBasePool {
+interface IMetaPool is IStableSwap {
     function basePool() external view returns (address);
 
     function exchangeUnderlying(

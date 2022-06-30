@@ -30,8 +30,8 @@ contract Treasury is Pausable, ITreasury {
     }
 
     function creatableBondAmount() external view override returns (uint256) {
-        IKIP7 EYE = IKIP7(addressBook.getAddress(bytes32("EYE")));
-        IBeneficiary beneficiary = IBeneficiary(addressBook.getAddress(bytes32("rewardBeneficiary")));
+        IKIP7 EYE = _getBondToken();
+        IBeneficiary beneficiary = _getBeneficiary();
         uint256 pendingAmount = totalCreatedBondAmount - totalClaimedBondAmount;
         uint256 balance = EYE.balanceOf(address(this));
         uint256 claimable = beneficiary.claimableToken(address(this));
@@ -43,10 +43,10 @@ contract Treasury is Pausable, ITreasury {
         uint256 amount,
         uint256 vestingPeriod
     ) external override onlyAdmin whenNotPaused {
-        IBeneficiary beneficiary = IBeneficiary(addressBook.getAddress(bytes32("rewardBeneficiary")));
+        IBeneficiary beneficiary = _getBeneficiary();
         beneficiary.claimToken(address(this));
 
-        IKIP7 EYE = IKIP7(addressBook.getAddress(bytes32("EYE")));
+        IKIP7 EYE = _getBondToken();
         uint256 pendingAmount = totalCreatedBondAmount - totalClaimedBondAmount;
         require(EYE.balanceOf(address(this)) >= amount + pendingAmount, "Treasury::createBond: insufficient amount");
 
@@ -81,7 +81,7 @@ contract Treasury is Pausable, ITreasury {
     function claimBond(address usr) public override {
         uint256 usrClaimCount = claimCount[usr];
         uint256 bondRecordLength = bondRecord[usr].length;
-        IKIP7 EYE = IKIP7(addressBook.getAddress(bytes32("EYE")));
+        IKIP7 EYE = _getBondToken();
 
         uint256 start = usrClaimCount;
         uint256 end = Math.min(start + 100, bondRecordLength);
@@ -99,5 +99,31 @@ contract Treasury is Pausable, ITreasury {
             }
             emit BondClaimed(usr, claimableAmount, block.timestamp, i);
         }
+    }
+
+    /* Admin Functions */
+    function withdrawToken(
+        IKIP7 token,
+        address to,
+        uint256 amount
+    ) external onlyOwner {
+        require(address(token) != address(_getBondToken()), "Treasury: cannot withdraw eye");
+        amount = Math.min(amount, token.balanceOf(address(this)));
+        token.transfer(to, amount);
+    }
+
+    function withdrawBondToken(address to, uint256 amount) external onlyOwner {
+        IKIP7 EYE = _getBondToken();
+        uint256 pendingAmount = totalCreatedBondAmount - totalClaimedBondAmount;
+        amount = Math.min(amount, EYE.balanceOf(address(this)) - pendingAmount);
+        EYE.transfer(to, amount);
+    }
+
+    function _getBondToken() internal view returns (IKIP7) {
+        return IKIP7(addressBook.getAddress(bytes32("EYE")));
+    }
+
+    function _getBeneficiary() internal view returns (IBeneficiary) {
+        return IBeneficiary(addressBook.getAddress(bytes32("rewardBeneficiary")));
     }
 }

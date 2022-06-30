@@ -12,28 +12,32 @@ contract AccessControl is Initializable {
 
     mapping(bytes32 => RoleData) private _roles;
 
-    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 internal constant OWNER_ROLE = bytes32("owner");
+    bytes32 internal constant ADMIN_ROLE = bytes32("admin");
+    bytes32 internal constant OPERATOR_ROLE = bytes32("operator");
 
     event RoleAdminChanged(bytes32 indexed role, bytes32 indexed previousAdminRole, bytes32 indexed newAdminRole);
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+
     modifier onlyRole(bytes32 role) {
         _checkRole(role, msg.sender);
         _;
     }
 
     modifier onlyOwner() {
-        _checkRole(bytes32("owner"), msg.sender);
+        _checkRole(OWNER_ROLE, msg.sender);
         _;
     }
 
     modifier onlyAdmin() {
-        _checkRole(bytes32("admin"), msg.sender);
+        _checkRole(ADMIN_ROLE, msg.sender);
         _;
     }
 
     modifier onlyOperator() {
-        _checkRole(bytes32("operator"), msg.sender);
+        _checkRole(OPERATOR_ROLE, msg.sender);
         _;
     }
 
@@ -45,12 +49,12 @@ contract AccessControl is Initializable {
         __AccessControl_init_unchained(_owner);
     }
 
-    function __AccessControl_init_unchained(address _owner) private initializer {
-        _setupRole(bytes32("owner"), _owner);
-        _setRoleAdmin(bytes32("admin"), bytes32("owner"));
-        _setRoleAdmin(bytes32("operator"), bytes32("owner"));
-        _setupRole(bytes32("admin"), _owner);
-        _setupRole(bytes32("operator"), _owner);
+    function __AccessControl_init_unchained(address _owner) private {
+        _setupRole(OWNER_ROLE, _owner);
+        _setRoleAdmin(ADMIN_ROLE, OWNER_ROLE);
+        _setRoleAdmin(OPERATOR_ROLE, OWNER_ROLE);
+        _setupRole(ADMIN_ROLE, _owner);
+        _setupRole(OPERATOR_ROLE, _owner);
     }
 
     function hasRole(bytes32 role, address account) public view returns (bool) {
@@ -59,7 +63,7 @@ contract AccessControl is Initializable {
 
     function _checkRole(bytes32 role, address account) internal view {
         if (!hasRole(role, account)) {
-            revert("AccessControl:_checkRole:invalid role");
+            revert("AccessControl: invalid role");
         }
     }
 
@@ -76,7 +80,7 @@ contract AccessControl is Initializable {
     }
 
     function renounceRole(bytes32 role, address account) public {
-        require(account == msg.sender, "AccessControl: can only renounce roles for self");
+        require(account == msg.sender, "AccessControl: not self");
 
         _revokeRole(role, account);
     }
@@ -107,7 +111,7 @@ contract AccessControl is Initializable {
 
     // --- ownable --
     function transferOwnership(address newOwner) public virtual onlyOwner {
-        _grantRole(bytes32("owner"), newOwner);
-        _revokeRole(bytes32("owner"), msg.sender);
+        _grantRole(OWNER_ROLE, newOwner);
+        _revokeRole(OWNER_ROLE, msg.sender);
     }
 }

@@ -1,0 +1,63 @@
+{
+  "name": "kokonutswap-contract",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "hardhat test",
+    "coverage": "hardhat coverage",
+    "compile": "hardhat compile",
+    "local": "hardhat node",
+    "lint": "npm run lint:js && npm run lint:sol",
+    "lint:js": "eslint '*/**/*.{js,ts}' --quiet --fix",
+    "lint:sol": "prettier --write \"contracts/**/*.sol\"",
+    "baobab:deploy": "hardhat --network baobab deploy"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kokoa-finance/kokonutswap-contract.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kokoa-finance/kokonutswap-contract/issues"
+  },
+  "homepage": "https://github.com/kokoa-finance/kokonutswap-contract#readme",
+  "devDependencies": {
+    "@eth-optimism/smock": "^1.1.5",
+    "@nomiclabs/hardhat-ethers": "npm:hardhat-deploy-ethers@^0.3.0-beta.13",
+    "@nomiclabs/hardhat-waffle": "^2.0.1",
+    "@openzeppelin/contracts": "^2.5.1",
+    "@openzeppelin/hardhat-upgrades": "^1.9.0",
+    "axios": "^0.21.1",
+    "chai": "^4.3.4",
+    "eslint": "^7.32.0",
+    "eslint-config-prettier": "^6.4.0",
+    "eslint-plugin-prettier": "^3.1.1",
+    "ethereum-waffle": "^3.3.0",
+    "ethers": "^5.6.9",
+    "hardhat": "^2.1.2",
+    "hardhat-abi-exporter": "^2.2.0",
+    "hardhat-contract-sizer": "^2.4.0",
+    "hardhat-deploy": "^0.11.11",
+    "hardhat-deploy-ethers": "^0.3.0-beta.13",
+    "hardhat-docgen": "^1.1.2",
+    "hardhat-gas-reporter": "^1.0.6",
+    "hardhat-storage-layout": "^0.1.6",
+    "husky": "^6.0.0",
+    "keythereum": "^1.2.0",
+    "lodash": "^4.17.21",
+    "prettier": "2.3.2",
+    "prettier-plugin-solidity": "^1.0.0-beta.14",
+    "readline-sync": "^1.4.10",
+    "solhint": "^2.3.0",
+    "solidity-coverage": "0.7.15"
+  },
+  "dependencies": {
+    "caver-js": "^1.6.3",
+    "cross-env": "^7.0.3",
+    "csv-parser": "^3.0.0",
+    "decimal.js": "^10.3.1",
+    "dotenv": "^8.6.0"
+  }
+}

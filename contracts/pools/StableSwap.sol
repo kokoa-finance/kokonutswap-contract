@@ -5,10 +5,12 @@ pragma solidity ^0.8.3;
 import "../library/openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "../library/Pausable.sol";
 import "../library/kip/IKIP7.sol";
-import "../interface/IPoolToken.sol";
 import "../interface/IStableSwap.sol";
+import "./StableSwapMath.sol";
 
 abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
+    error SlippageOccurred();
+
     uint256 public immutable override N_COINS;
 
     address internal constant KLAY_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
@@ -70,9 +72,9 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         uint256 _adminFee
     ) internal initializer {
         __Pausable_init();
-        require(_coins.length == N_COINS, "StableSwap::init: wrong _coins length");
-        require(_PRECISION_MUL.length == N_COINS, "StableSwap::init: wrong _PRECISION_MUL length");
-        require(_RATES.length == N_COINS, "StableSwap::init: wrong _RATES length");
+        require(_coins.length == N_COINS);
+        require(_PRECISION_MUL.length == N_COINS);
+        require(_RATES.length == N_COINS);
         for (uint256 i = 0; i < N_COINS; i++) {
             require(_coins[i] != address(0));
         }
@@ -97,23 +99,8 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         return type(uint256).max;
     }
 
-    function coinList() external view override returns (address[] memory coins_) {
-        coins_ = new address[](N_COINS);
-        address[] memory _coins = coins;
-        for (uint256 i = 0; i < N_COINS; i++) {
-            coins_[i] = _coins[i];
-        }
-    }
-
-    function balances(uint256 i) public view virtual override returns (uint256);
-
-    function adminBalances(uint256 i) public view virtual override returns (uint256);
-
-    function balanceList() external view override returns (uint256[] memory balances_) {
-        balances_ = new uint256[](N_COINS);
-        for (uint256 i = 0; i < N_COINS; i++) {
-            balances_[i] = balances(i);
-        }
+    function coinList() external view override returns (address[] memory) {
+        return coins;
     }
 
     function _A() internal view returns (uint256) {
@@ -146,35 +133,8 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         return _A();
     }
 
-    function getD(uint256[] memory xp, uint256 amp) internal view returns (uint256) {
-        uint256 S = 0;
-        for (uint256 i = 0; i < N_COINS; i++) {
-            S += xp[i];
-        }
-        if (S == 0) {
-            return 0;
-        }
-
-        uint256 Dprev = 0;
-        uint256 D = S;
-        uint256 Ann = amp * N_COINS;
-        for (uint256 _i = 0; _i < 255; _i++) {
-            uint256 DP = D;
-            for (uint256 _j = 0; _j < N_COINS; _j++) {
-                DP = (DP * D) / (xp[_j] * N_COINS); // If division by 0, this will be borked: only withdrawal will work. And that is good
-            }
-            Dprev = D;
-            D = (((Ann * S) / A_PRECISION + DP * N_COINS) * D) / (((Ann - A_PRECISION) * D) / A_PRECISION + (N_COINS + 1) * DP);
-            // Equality with the precision of 1
-            if (D > Dprev) {
-                if (D - Dprev <= 1) return D;
-            } else {
-                if (Dprev - D <= 1) return D;
-            }
-        }
-        // convergence typically occurs in 4 rounds or less, this should be unreachable!
-        // if it does happen the pool is borked and LPs can withdraw via `removeLiquidity`
-        revert();
+    function getD(uint256[] memory xp, uint256 amp) internal pure returns (uint256) {
+        return StableSwapMath.getD(xp, amp);
     }
 
     function getY(
@@ -183,54 +143,7 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         uint256 x,
         uint256[] memory xp_
     ) internal view returns (uint256) {
-        // x in the input is converted to the same price/precision
-
-        require(i != j); // dev: same coin
-        require(j >= 0); // dev: j below zero
-        require(j < N_COINS); // dev: j above N_COINS
-
-        // should be unreachable, but good for safety
-        require(i >= 0);
-        require(i < N_COINS);
-
-        uint256 amp = _A();
-        uint256 D = getD(xp_, amp);
-
-        uint256 S_ = 0;
-        uint256 _x = 0;
-        uint256 c = D;
-        uint256 Ann = amp * N_COINS;
-
-        for (uint256 _i = 0; _i < N_COINS; _i++) {
-            if (_i == i) {
-                _x = x;
-            } else if (_i != j) {
-                _x = xp_[_i];
-            } else {
-                continue;
-            }
-            S_ += _x;
-            c = (c * D) / (_x * N_COINS);
-        }
-        c = (c * D * A_PRECISION) / (Ann * N_COINS);
-        uint256 b = S_ + (D * A_PRECISION) / Ann; // - D
-        uint256 yPrev = 0;
-        uint256 y = D;
-        for (uint256 _i = 0; _i < 255; _i++) {
-            yPrev = y;
-            y = (y * y + c) / (2 * y + b - D);
-            // Equality with the precision of 1
-            if (y > yPrev) {
-                if (y - yPrev <= 1) {
-                    return y;
-                }
-            } else {
-                if (yPrev - y <= 1) {
-                    return y;
-                }
-            }
-        }
-        revert();
+        return StableSwapMath.getY(i, j, x, xp_, _A());
     }
 
     function _getDy(
@@ -293,76 +206,13 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         return _getDyUnderlying(i, j, dx, true);
     }
 
-    /// @notice Calculate estimated coins from the pool when remove by lp tokens
-    /// @dev Withdrawal amounts are based on current deposit ratios
-    /// @param _amount Quantity of LP tokens to burn in the withdrawal
-    /// @return List of amounts of coins that were withdrawn
-    function calcWithdraw(uint256 _amount) external view override returns (uint256[] memory) {
-        uint256 totalSupply = IPoolToken(token).totalSupply();
-        uint256[] memory amounts = new uint256[](N_COINS);
-
-        for (uint256 i = 0; i < N_COINS; i++) {
-            uint256 value = (balances(i) * _amount) / totalSupply;
-            amounts[i] = value;
-        }
-
-        return amounts;
-    }
-
     function getYD(
         uint256 A_,
         uint256 i,
         uint256[] memory xp,
         uint256 D
-    ) internal view returns (uint256) {
-        /*
-        Calculate x[i] if one reduces D from being calculated for xp to D
-
-        Done by solving quadratic equation iteratively.
-        x_1**2 + x1 * (sum' - (A*n**n - 1) * D / (A * n**n)) = D ** (n + 1) / (n ** (2 * n) * prod' * A)
-        x_1**2 + b*x_1 = c
-
-        x_1 = (x_1**2 + c) / (2*x_1 + b)
-        */
-        // x in the input is converted to the same price/precision
-
-        require(i >= 0); // dev: i below zero
-        require(i < N_COINS); // dev: i above N_COINS
-
-        uint256 S_ = 0;
-        uint256 _x = 0;
-
-        uint256 c = D;
-        uint256 Ann = A_ * N_COINS;
-
-        for (uint256 _i = 0; _i < N_COINS; _i++) {
-            if (_i != i) {
-                _x = xp[_i];
-            } else {
-                continue;
-            }
-            S_ += _x;
-            c = (c * D) / (_x * N_COINS);
-        }
-        c = (c * D * A_PRECISION) / (Ann * N_COINS);
-        uint256 b = S_ + (D * A_PRECISION) / Ann;
-        uint256 yPrev = 0;
-        uint256 y = D;
-        for (uint256 _i = 0; _i < 255; _i++) {
-            yPrev = y;
-            y = (y * y + c) / (2 * y + b - D);
-            // Equality with the precision of 1
-            if (y > yPrev) {
-                if (y - yPrev <= 1) {
-                    return y;
-                }
-            } else {
-                if (yPrev - y <= 1) {
-                    return y;
-                }
-            }
-        }
-        revert();
+    ) internal pure returns (uint256) {
+        return StableSwapMath.getYD(A_, i, xp, D);
     }
 
     /// Admin functions ///
@@ -451,13 +301,6 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
         transferOwnershipDeadline = 0;
     }
 
-    function adminBalanceList() external view override returns (uint256[] memory balances_) {
-        balances_ = new uint256[](N_COINS);
-        for (uint256 i = 0; i < N_COINS; i++) {
-            balances_[i] = adminBalances(i);
-        }
-    }
-
     function withdrawLostToken(
         address _token,
         uint256 _amount,
@@ -465,9 +308,9 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
     ) external override onlyOwner {
         address[] memory _coins = coins;
         for (uint256 i = 0; i < _coins.length; i++) {
-            require(_coins[i] != _token, "StableSwap::withdrawLostToken: cannot withdraw registered token");
+            require(_coins[i] != _token);
         }
-        uint256 balance = _token == KLAY_ADDRESS ? address(this).balance : IKIP7(_token).balanceOf(address(this));
+        uint256 balance = _token == KLAY_ADDRESS ? address(this).balance : _getThisTokenBalance(_token);
         if (balance < _amount) {
             _amount = balance;
         }
@@ -475,18 +318,13 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
             (bool success, ) = _to.call{value: _amount}("");
             require(success);
         } else {
-            require(IKIP7(_token).transfer(_to, _amount));
+            _pushToken(_token, _to, _amount);
         }
     }
 
     function rawCall(address to, bytes memory data) internal {
-        (bool success, ) = to.call(data);
-        require(success); // dev: failed transfer
-    }
-
-    function rawCall(address to, uint256 value) internal {
-        (bool success, ) = to.call{value: value}("");
-        require(success); // dev: failed transfer
+        (bool success, bytes memory ret) = to.call(data);
+        require(success, string(ret)); // dev: failed transfer
     }
 
     function arrCopy(uint256[] memory _input) internal pure returns (uint256[] memory) {
@@ -495,5 +333,37 @@ abstract contract StableSwap is ReentrancyGuard, Pausable, IStableSwap {
             result[i] = _input[i];
         }
         return result;
+    }
+
+    function _lpTotalSupply() internal view returns (uint256) {
+        return IKIP7(token).totalSupply();
+    }
+
+    function _burnLp(address _account, uint256 _amount) internal {
+        rawCall(token, abi.encodeWithSignature("burn(address,uint256)", _account, _amount));
+    }
+
+    function _pullToken(
+        address _token,
+        address _from,
+        uint256 _amount
+    ) internal {
+        rawCall(_token, abi.encodeWithSignature("transferFrom(address,address,uint256)", _from, address(this), _amount));
+    }
+
+    function _pushToken(
+        address _token,
+        address _to,
+        uint256 _amount
+    ) internal {
+        rawCall(_token, abi.encodeWithSignature("transfer(address,uint256)", _to, _amount));
+    }
+
+    function _getThisTokenBalance(address _token) internal view returns (uint256) {
+        return IKIP7(_token).balanceOf(address(this));
+    }
+
+    function _checkSlippage(uint256 big, uint256 small) internal pure {
+        if (big < small) revert SlippageOccurred();
     }
 }

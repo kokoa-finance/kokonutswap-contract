@@ -8,6 +8,8 @@ abstract contract Pausable is AccessControl {
     event Paused(address account);
     event Unpaused(address account);
 
+    bytes32 internal constant PAUSER_ROLE = bytes32("pauser");
+
     bool private _paused;
 
     function __Pausable_init() internal initializer {
@@ -18,32 +20,40 @@ abstract contract Pausable is AccessControl {
         __Pausable_init_unchained(_owner);
     }
 
-    function __Pausable_init_unchained(address _owner) private initializer {
+    function __Pausable_init_unchained(address _owner) private {
         __AccessControl_init(_owner);
-        _setRoleAdmin(bytes32("pauser"), bytes32("owner"));
-        _setupRole(bytes32("pauser"), _owner);
+        _setRoleAdmin(PAUSER_ROLE, OWNER_ROLE);
+        _setupRole(PAUSER_ROLE, _owner);
     }
 
     function paused() public view virtual returns (bool) {
         return _paused;
     }
 
+    function _whenNotPaused() private view {
+        require(!paused(), "paused");
+    }
+
     modifier whenNotPaused() virtual {
-        require(!paused(), "Pausable: paused");
+        _whenNotPaused();
         _;
+    }
+
+    function _whenPaused() private view {
+        require(paused(), "not paused");
     }
 
     modifier whenPaused() {
-        require(paused(), "Pausable: not paused");
+        _whenPaused();
         _;
     }
 
-    function pause() public whenNotPaused onlyRole("pauser") {
+    function pause() public whenNotPaused onlyRole(PAUSER_ROLE) {
         _paused = true;
         emit Paused(msg.sender);
     }
 
-    function unpause() public whenPaused onlyRole("pauser") {
+    function unpause() public whenPaused onlyRole(PAUSER_ROLE) {
         _paused = false;
         emit Unpaused(msg.sender);
     }

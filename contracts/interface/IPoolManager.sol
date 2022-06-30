@@ -8,4 +8,6 @@ interface IPoolManager {
     function claimAdminFee() external;
 
     function claimableAdminFee() external view returns (uint256);
+
+    function getPoolValue() external view returns (uint256);
 }

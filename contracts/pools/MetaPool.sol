@@ -3,6 +3,7 @@
 pragma solidity ^0.8.3;
 
 import "./StableSwap.sol";
+import "../interface/IBasePool.sol";
 import "../interface/IMetaPool.sol";
 
 abstract contract MetaPool is StableSwap, IMetaPool {
@@ -13,9 +14,9 @@ abstract contract MetaPool is StableSwap, IMetaPool {
     // Token corresponding to the pool is always the last one
     uint256 private constant BASE_CACHE_EXPIRES = 10 * 60; // 10 min
     address public override basePool;
-    uint256 public baseVirtualPrice;
+    uint256 private baseVirtualPrice;
     uint256 public baseCacheUpdated;
-    address[] public baseCoins;
+    address[] private baseCoins;
 
     // @dev WARN: be careful to add new variable here
     uint256[50] private __storageBuffer;
@@ -41,28 +42,39 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 _initialA,
         uint256 _fee,
         uint256 _adminFee
-    ) public initializer {
+    ) internal initializer {
         __StableSwap_init(_coins, _PRECISION_MUL, _RATES, _poolToken, _initialA, _fee, _adminFee);
 
         basePool = _basePool;
         for (uint256 i = 0; i < BASE_N_COINS; i++) {
             address _baseCoin = IBasePool(_basePool).coins(i);
-            baseCoins[i] = _baseCoin;
+            baseCoins.push(_baseCoin);
 
             rawCall(_baseCoin, abi.encodeWithSignature("approve(address,uint256)", _basePool, type(uint256).max));
         }
     }
 
-    function balances(uint256 i) public view override(II4ISwapPool, StableSwap) returns (uint256) {
+    function balances(uint256 i) external view override returns (uint256) {
         return _storedBalances[i];
     }
 
-    function _xp(uint256 vpRate) internal view returns (uint256[] memory result) {
-        result = RATES;
-        result[MAX_COIN] = vpRate; // virtual price for the metacurrency
+    function adminBalances(uint256 i) public view override returns (uint256) {
+        return _getThisTokenBalance(coins[i]) - _storedBalances[i];
+    }
+
+    function adminBalanceList() external view override returns (uint256[] memory balances_) {
+        balances_ = new uint256[](N_COINS);
         for (uint256 i = 0; i < N_COINS; i++) {
-            result[i] = (result[i] * _storedBalances[i]) / PRECISION;
+            balances_[i] = adminBalances(i);
         }
+    }
+
+    function balanceList() external view override returns (uint256[] memory) {
+        return _storedBalances;
+    }
+
+    function _xp(uint256 vpRate) internal view returns (uint256[] memory) {
+        return _xpMem(vpRate, _storedBalances);
     }
 
     function _xpMem(uint256 vpRate, uint256[] memory _balances) internal view returns (uint256[] memory result) {
@@ -73,9 +85,13 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         }
     }
 
+    function _getBaseVirtualPrice() internal view returns (uint256) {
+        return IBasePool(basePool).getVirtualPrice();
+    }
+
     function _vpRate() internal returns (uint256) {
         if (block.timestamp > baseCacheUpdated + BASE_CACHE_EXPIRES) {
-            uint256 vprice = IBasePool(basePool).getVirtualPrice();
+            uint256 vprice = _getBaseVirtualPrice();
             baseVirtualPrice = vprice;
             baseCacheUpdated = block.timestamp;
             return vprice;
@@ -86,7 +102,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
 
     function _vpRateRo() internal view returns (uint256) {
         if (block.timestamp > baseCacheUpdated + BASE_CACHE_EXPIRES) {
-            return IBasePool(basePool).getVirtualPrice();
+            return _getBaseVirtualPrice();
         } else {
             return baseVirtualPrice;
         }
@@ -97,22 +113,31 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256[] memory _balances,
         uint256 amp
     ) internal view returns (uint256) {
-        uint256[] memory xp = _xpMem(vpRate, _balances);
-        return getD(xp, amp);
+        return getD(_xpMem(vpRate, _balances), amp);
+    }
+
+    function getPrice(uint256 i, uint256 j) external view override returns (uint256 price) {
+        uint256 vp = _vpRateRo();
+        price = StableSwapMath.calculatePrice(i, j, _xp(vp), _A());
+        if (i == MAX_COIN) {
+            price = price * vp / PRECISION;
+        }
+        if (j == MAX_COIN) {
+            price = price * PRECISION / vp;
+        }
+    }
+
+    function getLpPrice(uint256 i) external view override returns (uint256) {
+        return StableSwapMath.calculateLpPrice(i, _xp(_vpRateRo()), _A(), _lpTotalSupply());
     }
 
     /// @notice The current virtual price of the pool LP token
     /// @dev Useful for calculating profits
     /// @return LP token virtual price normalized to 1e18
     function getVirtualPrice() external view override returns (uint256) {
-        uint256 amp = _A();
-        uint256 vpRate = _vpRateRo();
-        uint256[] memory xp = _xp(vpRate);
-        uint256 D = getD(xp, amp);
         // D is in the units similar to DAI (e.g. converted to precision 1e18)
         // When balanced, D = n * x_u - total virtual value of the portfolio
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
-        return (D * PRECISION) / tokenSupply;
+        return (getD(_xp(_vpRateRo()), _A()) * PRECISION) / _lpTotalSupply();
     }
 
     /// @notice Calculate addition or reduction in token supply from a deposit or withdrawal
@@ -134,14 +159,13 @@ abstract contract MetaPool is StableSwap, IMetaPool {
             }
         }
         uint256 D1 = getDMem(vpRate, _balances, amp);
-        uint256 tokenAmount = IPoolToken(token).totalSupply();
         uint256 diff = 0;
         if (isDeposit) {
             diff = D1 - D0;
         } else {
             diff = D0 - D1;
         }
-        return (diff * tokenAmount) / D0;
+        return (diff * _lpTotalSupply()) / D0;
     }
 
     /// @notice Deposit coins into the pool
@@ -152,7 +176,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         require(msg.value == 0);
         uint256 amp = _A();
         uint256 vpRate = _vpRate();
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
 
         // Initial invariant
         uint256[3] memory D;
@@ -201,27 +225,32 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         }
 
         // Calculate, how much pool tokens to mint
-        uint256 mintAmount = 0;
+        uint256 mintAmount;
         if (tokenSupply == 0) {
             mintAmount = D[1]; // Take the dust if there was any
         } else {
             mintAmount = (tokenSupply * (D[2] - D[0])) / D[0];
         }
-        require(mintAmount >= minMintAmount, "Slippage screwed you");
+        _checkSlippage(mintAmount, minMintAmount);
 
         // Take coins from the sender
         for (uint256 i = 0; i < N_COINS; i++) {
             if (amounts[i] > 0) {
-                require(IKIP7(coins[i]).transferFrom(msg.sender, address(this), amounts[i])); // dev: failed transfer
+                _pullToken(coins[i], msg.sender, amounts[i]);
             }
         }
 
         // Mint pool tokens
-        IPoolToken(token).mint(msg.sender, mintAmount);
+        rawCall(token, abi.encodeWithSignature("mint(address,uint256)", msg.sender, mintAmount));
 
         emit AddLiquidity(msg.sender, amounts, fees, D[1], tokenSupply + mintAmount);
 
         return mintAmount;
+    }
+
+    function _getVpRatesRo() internal view returns (uint256[] memory rates) {
+        rates = RATES;
+        rates[MAX_COIN] = _vpRateRo();
     }
 
     function _getDy(
@@ -231,15 +260,8 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         bool withoutFee
     ) internal view override returns (uint256) {
         // dx and dy in c-units
-        uint256[] memory rates = RATES;
-        rates[MAX_COIN] = _vpRateRo();
-        uint256[] memory xp = _xp(rates[MAX_COIN]);
-
-        uint256 x = xp[i] + ((dx * rates[i]) / PRECISION);
-        uint256 y = getY(i, j, x, xp);
-        uint256 dy = xp[j] - y - 1;
-        uint256 _fee = ((withoutFee ? 0 : fee) * dy) / FEE_DENOMINATOR;
-        return ((dy - _fee) * PRECISION) / rates[j];
+        uint256[] memory rates = _getVpRatesRo();
+        return StableSwapMath.calculateDy(rates, _xp(rates[MAX_COIN]), i, j, dx, _A(), (withoutFee ? 0 : fee));
     }
 
     // reference: https://github.com/curvefi/curve-contract/blob/c6df0cf14b557b11661a474d8d278affd849d3fe/contracts/pools/y/StableSwapY.vy#L351
@@ -249,14 +271,8 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 dy
     ) internal view override returns (uint256) {
         // dx and dy in c-units
-        uint256[] memory rates = RATES;
-        rates[MAX_COIN] = _vpRateRo();
-        uint256[] memory xp = _xp(rates[MAX_COIN]);
-
-        uint256 y = xp[j] - (((dy * FEE_DENOMINATOR) / (FEE_DENOMINATOR - fee)) * rates[j]) / PRECISION;
-        uint256 x = getY(j, i, y, xp);
-        uint256 dx = ((x - xp[i]) * PRECISION) / rates[i];
-        return dx;
+        uint256[] memory rates = _getVpRatesRo();
+        return StableSwapMath.calculateDx(rates, _xp(rates[MAX_COIN]), i, j, dy, _A(), fee);
     }
 
     function _getDyUnderlying(
@@ -269,7 +285,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 vpRate = _vpRateRo();
         uint256[] memory xp = _xp(vpRate);
         uint256[] memory precisions = PRECISION_MUL;
-        address _basePool = basePool;
+        IBasePool _basePool = IBasePool(basePool);
 
         uint256 metaI = MAX_COIN;
         uint256 metaJ = MAX_COIN;
@@ -290,19 +306,19 @@ abstract contract MetaPool is StableSwap, IMetaPool {
                 uint256[] memory baseInputs = new uint256[](BASE_N_COINS);
                 baseInputs[i - MAX_COIN] = dx;
                 // Token amount transformed to underlying "dollars"
-                x = (IBasePool(_basePool).calcTokenAmount(baseInputs, true) * vpRate) / PRECISION;
+                x = (_basePool.calcTokenAmount(baseInputs, true) * vpRate) / PRECISION;
                 // Accounting for deposit/withdraw fees approximately
                 if (!withoutFee) {
-                    x -= (x * IBasePool(_basePool).fee()) / (2 * FEE_DENOMINATOR);
+                    x -= (x * _basePool.fee()) / (2 * FEE_DENOMINATOR);
                 }
                 // Adding number of pool tokens
                 x += xp[MAX_COIN];
             } else {
                 // If both are from the base pool
                 if (withoutFee) {
-                    return IBasePool(_basePool).getDyWithoutFee(i - MAX_COIN, j - MAX_COIN, dx);
+                    return _basePool.getDyWithoutFee(i - MAX_COIN, j - MAX_COIN, dx);
                 }
-                return IBasePool(_basePool).getDy(i - MAX_COIN, j - MAX_COIN, dx);
+                return _basePool.getDy(i - MAX_COIN, j - MAX_COIN, dx);
             }
         }
 
@@ -317,18 +333,23 @@ abstract contract MetaPool is StableSwap, IMetaPool {
             // j is from BasePool
             // The fee is already accounted for
             if (withoutFee) {
-                dy = IBasePool(_basePool).calcWithdrawOneCoinWithoutFee((dy * PRECISION) / vpRate, j - MAX_COIN);
+                dy = _basePool.calcWithdrawOneCoinWithoutFee((dy * PRECISION) / vpRate, j - MAX_COIN);
             } else {
-                dy = IBasePool(_basePool).calcWithdrawOneCoin((dy * PRECISION) / vpRate, j - MAX_COIN);
+                dy = _basePool.calcWithdrawOneCoin((dy * PRECISION) / vpRate, j - MAX_COIN);
             }
         }
         return dy;
     }
 
+    function _getVpRates() internal returns (uint256[] memory rates) {
+        rates = RATES;
+        rates[MAX_COIN] = _vpRate();
+    }
+
     /// @notice Perform an exchange between two coins
     /// @dev Index values can be found via the `coins` public getter method
     /// @param i Index value for the coin to send
-    /// @param j Index valie of the coin to recieve
+    /// @param j Index value of the coin to receive
     /// @param dx Amount of `i` being exchanged
     /// @param minDy Minimum amount of `j` to receive
     /// @return Actual amount of `j` received
@@ -339,8 +360,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 minDy
     ) external payable override nonReentrant whenNotPaused returns (uint256) {
         require(msg.value == 0);
-        uint256[] memory rates = RATES;
-        rates[MAX_COIN] = _vpRate();
+        uint256[] memory rates = _getVpRates();
 
         uint256[] memory oldBalances = _storedBalances;
         uint256[] memory xp = _xpMem(rates[MAX_COIN], oldBalances);
@@ -353,7 +373,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
 
         // Convert all to real units
         dy = ((dy - dyFee) * PRECISION) / rates[j];
-        require(dy >= minDy, "Too few coins in result");
+        _checkSlippage(dy, minDy);
 
         uint256 dyAdminFee = (dyFee * adminFee) / FEE_DENOMINATOR;
         dyAdminFee = (dyAdminFee * PRECISION) / rates[j];
@@ -363,8 +383,8 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         // When rounding errors happen, we undercharge admin fee in favor of LP
         _storedBalances[j] = oldBalances[j] - dy - dyAdminFee;
 
-        require(IKIP7(coins[i]).transferFrom(msg.sender, address(this), dx));
-        require(IKIP7(coins[j]).transfer(msg.sender, dy));
+        _pullToken(coins[i], msg.sender, dx);
+        _pushToken(coins[j], msg.sender, dy);
 
         emit TokenExchange(msg.sender, i, dx, j, dy, dyFee);
 
@@ -384,16 +404,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 dx,
         uint256 minDy
     ) external override nonReentrant whenNotPaused returns (uint256 dy) {
-        uint256[] memory rates = RATES;
-        rates[MAX_COIN] = _vpRate();
-
-        uint256[2] memory metaIJ = [MAX_COIN, MAX_COIN];
-        if (i < MAX_COIN) {
-            metaIJ[0] = i;
-        }
-        if (j < MAX_COIN) {
-            metaIJ[1] = j;
-        }
+        uint256[] memory rates = _getVpRates();
 
         // Addresses for input and output coins
         address[2] memory ioCoins;
@@ -409,10 +420,11 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         }
 
         // "safeTransferFrom" which works for KIP7s which return bool or not
-        rawCall(ioCoins[0], abi.encodeWithSignature("transferFrom(address,address,uint256)", msg.sender, address(this), dx)); // dev: failed transfer
+        _pullToken(ioCoins[0], msg.sender, dx);
         // end "safeTransferFrom"
 
         uint256 dyFee = 0;
+        IBasePool basePool_ = IBasePool(basePool);
         if (i < MAX_COIN || j < MAX_COIN) {
             uint256[] memory oldBalances = _storedBalances;
             uint256[] memory xp = _xpMem(rates[MAX_COIN], oldBalances);
@@ -425,19 +437,20 @@ abstract contract MetaPool is StableSwap, IMetaPool {
                 // At first, get the amount of pool tokens
                 uint256[] memory baseInputs = new uint256[](BASE_N_COINS);
                 baseInputs[i - MAX_COIN] = dx;
-                address coin_i = coins[MAX_COIN];
+                address coinI = coins[MAX_COIN];
                 // Deposit and measure delta
-                x = IKIP7(coin_i).balanceOf(address(this));
-                IBasePool(basePool).addLiquidity(baseInputs, 0);
+                x = _getThisTokenBalance(coinI);
+                rawCall(address(basePool_), abi.encodeWithSignature("addLiquidity(uint256[],uint256)", baseInputs, 0));
                 // Need to convert pool token to "virtual" units using rates
                 // dx is also different now
-                dx = IKIP7(coin_i).balanceOf(address(this)) - x;
+                dx = _getThisTokenBalance(coinI) - x;
                 x = (dx * rates[MAX_COIN]) / PRECISION;
                 // Adding number of pool tokens
                 x += xp[MAX_COIN];
             }
 
             {
+                uint256[2] memory metaIJ = [i < MAX_COIN ? i : MAX_COIN, j < MAX_COIN ? j : MAX_COIN];
                 // Either a real coin or token
                 dy = xp[metaIJ[1]] - getY(metaIJ[0], metaIJ[1], x, xp) - 1; // -1 just in case there were some rounding errors
                 dyFee = (dy * fee) / FEE_DENOMINATOR;
@@ -457,24 +470,39 @@ abstract contract MetaPool is StableSwap, IMetaPool {
 
             // Withdraw from the base pool if needed
             if (j >= MAX_COIN) {
-                uint256 outAmount = IKIP7(ioCoins[1]).balanceOf(address(this));
-                IBasePool(basePool).removeLiquidityOneCoin(dy, j - MAX_COIN, 0);
-                dy = IKIP7(ioCoins[1]).balanceOf(address(this)) - outAmount;
+                uint256 outAmount = _getThisTokenBalance(ioCoins[1]);
+                rawCall(address(basePool_), abi.encodeWithSignature("removeLiquidityOneCoin(uint256,uint256,uint256)", dy, j - MAX_COIN, 0));
+                dy = _getThisTokenBalance(ioCoins[1]) - outAmount;
             }
-            require(dy >= minDy, "Too few coins in result");
+            _checkSlippage(dy, minDy);
         } else {
             // If both are from the base pool
-            dy = IKIP7(ioCoins[1]).balanceOf(address(this));
-            IBasePool(basePool).exchange(i - MAX_COIN, j - MAX_COIN, dx, minDy);
-            dy = IKIP7(ioCoins[1]).balanceOf(address(this)) - dy;
+            dy = _getThisTokenBalance(ioCoins[1]);
+            rawCall(address(basePool_), abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256)", i - MAX_COIN, j - MAX_COIN, dx, minDy));
+            dy = _getThisTokenBalance(ioCoins[1]) - dy;
         }
         // "safeTransfer" which works for KIP7s which return bool or not
-        rawCall(ioCoins[1], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, dy)); // dev: failed transfer
+        _pushToken(ioCoins[1], msg.sender, dy);
         // end "safeTransfer"
 
         emit TokenExchangeUnderlying(msg.sender, i, dx, j, dy, dyFee);
 
         return dy;
+    }
+
+    /// @notice Calculate estimated coins from the pool when remove by lp tokens
+    /// @dev Withdrawal amounts are based on current deposit ratios
+    /// @param _amount Quantity of LP tokens to burn in the withdrawal
+    /// @return List of amounts of coins that were withdrawn
+    function calcWithdraw(uint256 _amount) external view override returns (uint256[] memory) {
+        uint256 totalSupply = _lpTotalSupply();
+        uint256[] memory amounts = new uint256[](N_COINS);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            amounts[i] = (_storedBalances[i] * _amount) / totalSupply;
+        }
+
+        return amounts;
     }
 
     /// @notice Withdraw coins from the pool
@@ -483,23 +511,22 @@ abstract contract MetaPool is StableSwap, IMetaPool {
     /// @param minAmounts Minimum amounts of underlying coins to receive
     /// @return List of amounts of coins that were withdrawn
     function removeLiquidity(uint256 _amount, uint256[] memory minAmounts) external override nonReentrant returns (uint256[] memory) {
-        uint256 totalSupply = IPoolToken(token).totalSupply();
+        uint256 totalSupply = _lpTotalSupply();
         uint256[] memory amounts = new uint256[](N_COINS);
-        uint256[] memory fees = new uint256[](N_COINS); // Fees are unused but we've got them historically in event
 
         for (uint256 i = 0; i < N_COINS; i++) {
             uint256 value = (_storedBalances[i] * _amount) / totalSupply;
-            require(value >= minAmounts[i], "Withdrawal resulted in fewer coins than expected");
+            _checkSlippage(value, minAmounts[i]);
             _storedBalances[i] -= value;
             amounts[i] = value;
 
             // "safeTransfer" which works for KIP7s which return bool or not
-            rawCall(coins[i], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, value));
+            _pushToken(coins[i], msg.sender, value);
         }
 
-        IPoolToken(token).burn(msg.sender, _amount); // dev: insufficient funds
+        _burnLp(msg.sender, _amount);
 
-        emit RemoveLiquidity(msg.sender, amounts, fees, totalSupply - _amount);
+        emit RemoveLiquidity(msg.sender, amounts, new uint256[](N_COINS), totalSupply - _amount);
 
         return amounts;
     }
@@ -518,7 +545,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 amp = _A();
         uint256 vpRate = _vpRate();
 
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         require(tokenSupply != 0); // dev: zero total supply
 
         uint256[] memory oldBalances = _storedBalances;
@@ -552,12 +579,12 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 tokenAmount = ((D[0] - D[2]) * tokenSupply) / D[0];
         require(tokenAmount != 0); // dev: zero tokens burned
         tokenAmount += 1; // In case of rounding errors - make it unfavorable for the "attacker"
-        require(tokenAmount <= maxBurnAmount, "Slippage screwed you");
+        _checkSlippage(maxBurnAmount, tokenAmount);
 
-        IPoolToken(token).burn(msg.sender, tokenAmount); // dev: insufficient funds
+        _burnLp(msg.sender, tokenAmount);
         for (uint256 i = 0; i < N_COINS; i++) {
             if (amounts[i] != 0) {
-                IKIP7(coins[i]).transfer(msg.sender, amounts[i]);
+                _pushToken(coins[i], msg.sender, amounts[i]);
             }
         }
 
@@ -569,7 +596,6 @@ abstract contract MetaPool is StableSwap, IMetaPool {
     function _calcWithdrawOneCoin(
         uint256 _tokenAmount,
         uint256 i,
-        uint256 vpRate,
         bool withoutFee
     )
         internal
@@ -580,6 +606,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
             uint256 totalSupply
         )
     {
+        uint256 vpRate = _vpRateRo();
         // First, need to calculate
         // * Get current D
         // * Solve Eqn against y_i for D - _tokenAmount
@@ -588,7 +615,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256[2] memory D;
         D[0] = getD(xp, amp);
 
-        totalSupply = IPoolToken(token).totalSupply();
+        totalSupply = _lpTotalSupply();
         D[1] = D[0] - (_tokenAmount * D[0]) / totalSupply;
         uint256 newY = getYD(amp, i, xp, D[1]);
 
@@ -630,8 +657,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
     /// @param i Index value of the coin to withdraw
     /// @return Amount of coin received
     function calcWithdrawOneCoin(uint256 _tokenAmount, uint256 i) external view override returns (uint256) {
-        uint256 vpRate = _vpRateRo();
-        (uint256 result, , ) = _calcWithdrawOneCoin(_tokenAmount, i, vpRate, false);
+        (uint256 result, , ) = _calcWithdrawOneCoin(_tokenAmount, i, false);
         return result;
     }
 
@@ -640,8 +666,7 @@ abstract contract MetaPool is StableSwap, IMetaPool {
     /// @param i Index value of the coin to withdraw
     /// @return Amount of coin received
     function calcWithdrawOneCoinWithoutFee(uint256 _tokenAmount, uint256 i) external view override returns (uint256) {
-        uint256 vpRate = _vpRateRo();
-        (uint256 result, , ) = _calcWithdrawOneCoin(_tokenAmount, i, vpRate, true);
+        (uint256 result, , ) = _calcWithdrawOneCoin(_tokenAmount, i, true);
         return result;
     }
 
@@ -655,13 +680,12 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         uint256 i,
         uint256 _minAmount
     ) external override nonReentrant whenNotPaused returns (uint256) {
-        uint256 vpRate = _vpRate();
-        (uint256 dy, uint256 dyFee, uint256 totalSupply) = _calcWithdrawOneCoin(_tokenAmount, i, vpRate, false);
-        require(dy >= _minAmount, "Not enough coins removed");
+        (uint256 dy, uint256 dyFee, uint256 totalSupply) = _calcWithdrawOneCoin(_tokenAmount, i, false);
+        _checkSlippage(dy, _minAmount);
 
         _storedBalances[i] -= (dy + (dyFee * adminFee) / FEE_DENOMINATOR);
-        IPoolToken(token).burn(msg.sender, _tokenAmount); // dev: insufficient funds
-        require(IKIP7(coins[i]).transfer(msg.sender, dy));
+        _burnLp(msg.sender, _tokenAmount);
+        _pushToken(coins[i], msg.sender, dy);
         uint256[] memory amounts = new uint256[](N_COINS);
         uint256[] memory fees = new uint256[](N_COINS);
         amounts[i] = dy;
@@ -676,25 +700,21 @@ abstract contract MetaPool is StableSwap, IMetaPool {
         super.transferOwnership(newOwner);
     }
 
-    function adminBalances(uint256 i) public view override(IStableSwap, StableSwap) returns (uint256) {
-        return IKIP7(coins[i]).balanceOf(address(this)) - _storedBalances[i];
-    }
-
-    function withdrawAdminFees(address recipient) external override onlyOwner {
-        require(recipient != address(0), "StableSwap::withdrawAdminFee: 0 address");
+    function withdrawAdminFees(address recipient) external override onlyOperator {
+        require(recipient != address(0));
         for (uint256 i = 0; i < N_COINS; i++) {
             address c = coins[i];
-            uint256 value = IKIP7(c).balanceOf(address(this)) - _storedBalances[i];
+            uint256 value = _getThisTokenBalance(c) - _storedBalances[i];
             if (value > 0) {
                 // "safeTransfer" which works for KIP7s which return bool or not
-                rawCall(c, abi.encodeWithSignature("transfer(address,uint256)", recipient, value));
+                _pushToken(c, recipient, value);
             }
         }
     }
 
     function donateAdminFees() external override onlyOwner {
         for (uint256 i = 0; i < N_COINS; i++) {
-            _storedBalances[i] = IKIP7(coins[i]).balanceOf(address(this));
+            _storedBalances[i] = _getThisTokenBalance(coins[i]);
         }
     }
 }

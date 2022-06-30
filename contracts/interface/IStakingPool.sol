@@ -22,5 +22,8 @@ interface IStakingPool {
 
     function claimableReward(address usr) external view returns (uint256 claimable);
 
+    // @deprecated
     function claimReward(address usr) external;
+
+    function claimUnstakedReward(address usr) external;
 }

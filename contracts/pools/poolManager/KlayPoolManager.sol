@@ -9,11 +9,19 @@ import "../../interface/klayswap/IKlayswapFactory.sol";
 import "../../interface/klayswap/IKlayswapExchange.sol";
 import "../../library/kip/IKIP7.sol";
 import "../../library/Pausable.sol";
+import "../../interface/ICryptoSwap2Pool.sol";
 
 contract KlayPoolManager is IPoolManager, AccessControl, Pausable {
+    address private constant KLAY_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    ICryptoSwap2Pool public immutable KLAY_KSD;
+
     IAddressBook public addressBook;
     address public override pool;
     address[] public coins;
+
+    constructor(address _KLAY_KSD) {
+        KLAY_KSD = ICryptoSwap2Pool(_KLAY_KSD);
+    }
 
     function __KlayPoolManager_init(address addressBook_, address pool_) public initializer {
         __Pausable_init();
@@ -25,29 +33,32 @@ contract KlayPoolManager is IPoolManager, AccessControl, Pausable {
     /// @dev assume that all coins are converted to ksd in one path.
     function claimAdminFee() external override {
         address tokenTreasury = addressBook.getAddress(bytes32("KSDTreasury"));
-        require(tokenTreasury == msg.sender, "KlayPoolManager::claimAdminFee: Invalid msg.sender");
+        require(tokenTreasury == msg.sender, "Invalid msg.sender");
 
         address ksd = addressBook.getAddress(bytes32("KSD"));
-        address klayswap = addressBook.getAddress(bytes32("KlayswapFactory"));
         uint256 ksdBalance = IKIP7(ksd).balanceOf(address(this));
 
         // withdraw adminFees
         IStableSwap(pool).withdrawAdminFees(address(this));
 
-        // exchange adminFees to KSD
-        address[] memory path = new address[](0);
+        // exchange adminFees to Klay
+        uint256 klayIndex = IStableSwap(pool).coinIndex(KLAY_ADDRESS);
         for (uint256 i = 0; i < coins.length; i++) {
-            if (coins[i] == 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) {
-                if (address(this).balance > 0) {
-                    IKlayswapFactory(klayswap).exchangeKlayPos{value: address(this).balance}(ksd, 1, path);
-                }
+            if (i == klayIndex) {
+                continue;
             } else {
                 uint256 tokenBalance = IKIP7(coins[i]).balanceOf(address(this));
                 if (tokenBalance > 0) {
-                    IKIP7(coins[i]).approve(klayswap, tokenBalance);
-                    IKlayswapFactory(klayswap).exchangeKctPos(coins[i], tokenBalance, ksd, 1, path);
+                    IKIP7(coins[i]).approve(pool, tokenBalance);
+                    IStableSwap(pool).exchange(i, klayIndex, tokenBalance, 0);
                 }
             }
+        }
+
+        // exchange Klay to KSD
+        uint256 klayBalance = address(this).balance;
+        if (klayBalance > 0) {
+            KLAY_KSD.exchange{value: klayBalance}(0, 1, klayBalance, 0);
         }
 
         // transfer additional KSD amount to KSDTreasury contract
@@ -58,28 +69,52 @@ contract KlayPoolManager is IPoolManager, AccessControl, Pausable {
     }
 
     function claimableAdminFee() external view override returns (uint256) {
-        address ksd = addressBook.getAddress(bytes32("KSD"));
-        address klayswap = addressBook.getAddress(bytes32("KlayswapFactory"));
         uint256[] memory adminBalances = IStableSwap(pool).adminBalanceList();
 
         // claimable the other adminFees
-        uint256 claimableAmount;
-        address lp;
+        uint256 klayAmount = address(this).balance;
+        uint256 klayIndex = IStableSwap(pool).coinIndex(KLAY_ADDRESS);
         for (uint256 i = 0; i < coins.length; i++) {
-            if (adminBalances[i] == 0) {
+            uint256 amount = adminBalances[i] + _getThisTokenBalance(coins[i]);
+            if (amount == 0) {
                 continue;
             }
-            if (coins[i] == 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE) {
-                lp = IKlayswapFactory(klayswap).tokenToPool(address(0), ksd);
-                claimableAmount = claimableAmount + IKlayswapExchange(lp).estimatePos(address(0), adminBalances[i]);
+            if (i == klayIndex) {
+                klayAmount += amount;
             } else {
-                lp = IKlayswapFactory(klayswap).tokenToPool(coins[i], ksd);
-                claimableAmount = claimableAmount + IKlayswapExchange(lp).estimatePos(coins[i], adminBalances[i]);
+                klayAmount += IStableSwap(pool).getDy(i, klayIndex, amount);
             }
         }
 
-        return claimableAmount;
+        return KLAY_KSD.getDy(0, 1, klayAmount);
+    }
+
+    function getPoolValue() external view override returns (uint256) {
+        uint256[] memory _balances = IStableSwap(pool).balanceList();
+
+        // claimable the other adminFees
+        uint256 klayAmount;
+        uint256 klayIndex = IStableSwap(pool).coinIndex(KLAY_ADDRESS);
+        for (uint256 i = 0; i < coins.length; i++) {
+            if (_balances[i] == 0) {
+                continue;
+            }
+            if (i == klayIndex) {
+                klayAmount += _balances[i];
+            } else {
+                klayAmount += (IStableSwap(pool).getPrice(i, klayIndex) * _balances[i]) / 10**18;
+            }
+        }
+
+        return (klayAmount * KLAY_KSD.getPrice(0, 1)) / 10**18;
     }
 
     receive() external payable {}
+
+    function _getThisTokenBalance(address token) internal view returns (uint256) {
+        if (token == KLAY_ADDRESS) {
+            return address(this).balance;
+        }
+        return IKIP7(token).balanceOf(address(this));
+    }
 }

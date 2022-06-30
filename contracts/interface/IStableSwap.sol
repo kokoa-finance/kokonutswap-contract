@@ -20,6 +20,8 @@ interface IStableSwap is II4ISwapPool {
 
     function APrecise() external view returns (uint256);
 
+    function getLpPrice(uint256 i) external view returns (uint256);
+
     function getDx(
         uint256 i,
         uint256 j,

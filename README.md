@@ -1,6 +1,6 @@
-# i4i-contract
+# kokonutswap-contract
 
-https://i4i.finance/
+https://kokonutswap.finance/
 
 ## Deployed Contracts
 
@@ -13,7 +13,7 @@ baobab
 |CSLPEYEKSDStakingPool| [0xEF447AFA895bb7B4Ce2984de6EC8ab8A27A54a5d](https://baobab.scope.klaytn.com/account/0xEF447AFA895bb7B4Ce2984de6EC8ab8A27A54a5d)|
 |CSLPEYEKSDTreasury| [0x28deCA85FbA045B993a18e1Befa2E66Ab22aeD07](https://baobab.scope.klaytn.com/account/0x28deCA85FbA045B993a18e1Befa2E66Ab22aeD07)|
 |EYEOracle| [0x31dDBE1CA680bb3303f43beeeb416d9C5e65024A](https://baobab.scope.klaytn.com/account/0x31dDBE1CA680bb3303f43beeeb416d9C5e65024A)|
-|EyeToken| [0xB84b835696AC724865Cf32987124a62290B16109](https://baobab.scope.klaytn.com/account/0xB84b835696AC724865Cf32987124a62290B16109)|
+|KokonutSwapToken| [0xB84b835696AC724865Cf32987124a62290B16109](https://baobab.scope.klaytn.com/account/0xB84b835696AC724865Cf32987124a62290B16109)|
 |K4PoolManager| [0x91113aC8e9a3e5BAe81753837B0e083b039790D1](https://baobab.scope.klaytn.com/account/0x91113aC8e9a3e5BAe81753837B0e083b039790D1)|
 |KASH3EYEStakingPool| [0x9FCAe3fC6e1B6D2c08F9698B19F99d77B86f3cd5](https://baobab.scope.klaytn.com/account/0x9FCAe3fC6e1B6D2c08F9698B19F99d77B86f3cd5)|
 |KASH3PoolManager| [0x817C88cc52Fe3C5dA02377CAD8eccc9bfFdC04d7](https://baobab.scope.klaytn.com/account/0x817C88cc52Fe3C5dA02377CAD8eccc9bfFdC04d7)|
@@ -31,14 +31,14 @@ baobab
 |StableSwapAKLAY| [0x49633a70aE733aBc4e46FFC5A3060AeE1969273f](https://baobab.scope.klaytn.com/account/0x49633a70aE733aBc4e46FFC5A3060AeE1969273f)|
 |StableSwapAKLAYToken| [0x3D2b73c32e6f1D5D36A1F5c756591E2f44deeF33](https://baobab.scope.klaytn.com/account/0x3D2b73c32e6f1D5D36A1F5c756591E2f44deeF33)|
 |StableSwapK4Pool| [0xd5c4509399dAA5300De231F6f7fd17bC56804b10](https://baobab.scope.klaytn.com/account/0xd5c4509399dAA5300De231F6f7fd17bC56804b10)|
+|StableSwapK4PoolToken| [0xD59aC0daEe958Bb365A6e60e5fdc6BEEbF49B78A](https://baobab.scope.klaytn.com/account/0xD59aC0daEe958Bb365A6e60e5fdc6BEEbF49B78A)|
 |StableSwapKASH3Pool| [0x61336007B382db9e603a058D0dD3E3f842d0c98c](https://baobab.scope.klaytn.com/account/0x61336007B382db9e603a058D0dD3E3f842d0c98c)|
 |StableSwapKASH3PoolToken| [0x779e178EA590B7AC3883Ad16FE37DdB15F8dcE04](https://baobab.scope.klaytn.com/account/0x779e178EA590B7AC3883Ad16FE37DdB15F8dcE04)|
 |StableSwapKSDKASH| [0x7526A3Ef8042704574a54Ee1459d558e45B25708](https://baobab.scope.klaytn.com/account/0x7526A3Ef8042704574a54Ee1459d558e45B25708)|
 |StableSwapKSDKASHToken| [0x2f5640e6B0dd2f07BDb7BE2C85751ED7b9794B79](https://baobab.scope.klaytn.com/account/0x2f5640e6B0dd2f07BDb7BE2C85751ED7b9794B79)|
 |StableSwapKSDKBUSD| [0xfCc13EC5cc7536901ce7089C5Cf6a8e316415170](https://baobab.scope.klaytn.com/account/0xfCc13EC5cc7536901ce7089C5Cf6a8e316415170)|
 |StableSwapKSDKBUSDToken| [0xF76f32ca91d43DA6bB53dd82Ee0d401E9D380531](https://baobab.scope.klaytn.com/account/0xF76f32ca91d43DA6bB53dd82Ee0d401E9D380531)|
-|StableSwapKSDToken| [0xD59aC0daEe958Bb365A6e60e5fdc6BEEbF49B78A](https://baobab.scope.klaytn.com/account/0xD59aC0daEe958Bb365A6e60e5fdc6BEEbF49B78A)|
-|StakedEyeToken| [0xdaEBDAFE660c447E85942Aff2dF26264eb44dae6](https://baobab.scope.klaytn.com/account/0xdaEBDAFE660c447E85942Aff2dF26264eb44dae6)|
+|StakedKokonutSwapToken| [0xdaEBDAFE660c447E85942Aff2dF26264eb44dae6](https://baobab.scope.klaytn.com/account/0xdaEBDAFE660c447E85942Aff2dF26264eb44dae6)|
 
 
 cypress
@@ -50,7 +50,7 @@ cypress
 |CSLPEYEKSDStakingPool| [0x7f7452ac1ce35591F8d67bF4ed94dCfdA1E49311](https://scope.klaytn.com/account/0x7f7452ac1ce35591F8d67bF4ed94dCfdA1E49311)|
 |CSLPEYEKSDTreasury| [0x29b6355026d423A9D550Dc79eFf05c12DbBeE12B](https://scope.klaytn.com/account/0x29b6355026d423A9D550Dc79eFf05c12DbBeE12B)|
 |EYEOracle| [0xe8D291f1bC4975DfEB669ae6Bf9658905280eA68](https://scope.klaytn.com/account/0xe8D291f1bC4975DfEB669ae6Bf9658905280eA68)|
-|EyeToken| [0xCd670d77f3dCAB82d43DFf9BD2C4b87339FB3560](https://scope.klaytn.com/account/0xCd670d77f3dCAB82d43DFf9BD2C4b87339FB3560)|
+|KokonutSwapToken| [0xCd670d77f3dCAB82d43DFf9BD2C4b87339FB3560](https://scope.klaytn.com/account/0xCd670d77f3dCAB82d43DFf9BD2C4b87339FB3560)|
 |K4PoolManager| [0xf8fF2caaA06Cc65b714C4056a7368E21aeBc5eC6](https://scope.klaytn.com/account/0xf8fF2caaA06Cc65b714C4056a7368E21aeBc5eC6)|
 |KASH3EYEStakingPool| [0x352BA5D409BdF5Ee35264524402313b755f51670](https://scope.klaytn.com/account/0x352BA5D409BdF5Ee35264524402313b755f51670)|
 |KASH3PoolManager| [0xadBB263a8A2f8E33bB9baBca14115b0e6194378d](https://scope.klaytn.com/account/0xadBB263a8A2f8E33bB9baBca14115b0e6194378d)|
@@ -68,11 +68,11 @@ cypress
 |StableSwapAKLAY| [0x3a15884903a7D4eF82905a608431E677f6E33306](https://scope.klaytn.com/account/0x3a15884903a7D4eF82905a608431E677f6E33306)|
 |StableSwapAKLAYToken| [0x2b3b40647aD8B6BA4aaab4642287e7AB6293BA27](https://scope.klaytn.com/account/0x2b3b40647aD8B6BA4aaab4642287e7AB6293BA27)|
 |StableSwapK4Pool| [0xb0Da0BBE0a13C2c17178aEa2fEC91AA08157F299](https://scope.klaytn.com/account/0xb0Da0BBE0a13C2c17178aEa2fEC91AA08157F299)|
+|StableSwapK4PoolToken| [0x22e3aC1e6595B64266e0b062E01faE31d9cdD578](https://scope.klaytn.com/account/0x22e3aC1e6595B64266e0b062E01faE31d9cdD578)|
 |StableSwapKASH3Pool| [0x49cebd5ad40359F5Fa4126419c86B5721a1d7F75](https://scope.klaytn.com/account/0x49cebd5ad40359F5Fa4126419c86B5721a1d7F75)|
 |StableSwapKASH3PoolToken| [0x8187b3F5d623B18aCe3951E443A99bCD3dC3eeB1](https://scope.klaytn.com/account/0x8187b3F5d623B18aCe3951E443A99bCD3dC3eeB1)|
 |StableSwapKSDKASH| [0x44ACE4b2C239F3A34866bB7e6149E6bA9eb4110E](https://scope.klaytn.com/account/0x44ACE4b2C239F3A34866bB7e6149E6bA9eb4110E)|
 |StableSwapKSDKASHToken| [0xBDc4Abb3E4b8DE77c8889318dfB98A8bcd81A8c4](https://scope.klaytn.com/account/0xBDc4Abb3E4b8DE77c8889318dfB98A8bcd81A8c4)|
 |StableSwapKSDKBUSD| [0x1509131EaDbE15A6c830b955d401164b641ba67b](https://scope.klaytn.com/account/0x1509131EaDbE15A6c830b955d401164b641ba67b)|
 |StableSwapKSDKBUSDToken| [0x2ED5f3A3F2D84A4691cdf5927bCFE488A5265C3a](https://scope.klaytn.com/account/0x2ED5f3A3F2D84A4691cdf5927bCFE488A5265C3a)|
-|StableSwapKSDToken| [0x22e3aC1e6595B64266e0b062E01faE31d9cdD578](https://scope.klaytn.com/account/0x22e3aC1e6595B64266e0b062E01faE31d9cdD578)|
-|StakedEyeToken| [0xc75456755D68058BF182BCd41c6d9650DB4ce89E](https://scope.klaytn.com/account/0xc75456755D68058BF182BCd41c6d9650DB4ce89E)|
+|StakedKokonutSwapToken| [0xc75456755D68058BF182BCd41c6d9650DB4ce89E](https://scope.klaytn.com/account/0xc75456755D68058BF182BCd41c6d9650DB4ce89E)|

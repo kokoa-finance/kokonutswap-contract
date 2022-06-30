@@ -42,7 +42,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         result = new uint256[](N_COINS);
         result[0] = address(this).balance - _storedBalances[0] - _value;
         for (uint256 i = 1; i < N_COINS; i++) {
-            result[i] = IKIP7(coins[i]).balanceOf(address(this)) - _storedBalances[i];
+            result[i] = _getThisTokenBalance(coins[i]) - _storedBalances[i];
         }
     }
 
@@ -50,12 +50,28 @@ abstract contract KlayPool is IKlayPool, StableSwap {
     ///         pool, less the accrued admin fees
     /// @param i Index value for the coin to query balance of
     /// @return Token balance
-    function balances(uint256 i) public view override(II4ISwapPool, StableSwap) returns (uint256) {
+    function balances(uint256 i) external view override returns (uint256) {
         return _balances(0)[i];
     }
 
-    function adminBalances(uint256 i) public view override(IStableSwap, StableSwap) returns (uint256) {
+    function adminBalances(uint256 i) external view override returns (uint256) {
         return _storedBalances[i];
+    }
+
+    function adminBalanceList() external view override returns (uint256[] memory) {
+        return _storedBalances;
+    }
+
+    function balanceList() external view override returns (uint256[] memory) {
+        return _balances(0);
+    }
+
+    function getPrice(uint256 i, uint256 j) external view override returns (uint256) {
+        return StableSwapMath.calculatePrice(i, j, _balances(0), _A());
+    }
+
+    function getLpPrice(uint256 i) external view override returns (uint256) {
+        return StableSwapMath.calculateLpPrice(i, _balances(0), _A(), _lpTotalSupply());
     }
 
     /// @notice The current virtual price of the pool LP token
@@ -65,8 +81,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256 D = getD(_balances(0), _A());
         // D is in the units similar to DAI (e.g. converted to precision 1e18)
         // When balanced, D = n * x_u - total virtual value of the portfolio
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
-        return (D * PRECISION) / tokenSupply;
+        return (D * PRECISION) / _lpTotalSupply();
     }
 
     /// @notice Calculate addition or reduction in token supply from a deposit or withdrawal
@@ -87,7 +102,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
             }
         }
         uint256 D1 = getD(balances_, amp);
-        uint256 tokenAmount = IPoolToken(token).totalSupply();
+        uint256 tokenAmount = _lpTotalSupply();
         uint256 diff = 0;
         if (isDeposit) {
             diff = D1 - D0;
@@ -108,7 +123,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256[] memory D = new uint256[](3);
         D[0] = getD(oldBalances, amp);
 
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         uint256[] memory newBalances = arrCopy(oldBalances);
         for (uint256 i = 0; i < N_COINS; i++) {
             if (tokenSupply == 0) {
@@ -150,18 +165,18 @@ abstract contract KlayPool is IKlayPool, StableSwap {
             mintAmount = D[1]; // Take the dust if there was any
         }
 
-        require(mintAmount >= minMintAmount, "Slippage screwed you");
+        _checkSlippage(mintAmount, minMintAmount);
 
         // Take coins from the sender
         require(msg.value == amounts[0]);
         for (uint256 i = 1; i < N_COINS; i++) {
             if (amounts[i] > 0) {
-                require(IKIP7(coins[i]).transferFrom(msg.sender, address(this), amounts[i]));
+                _pullToken(coins[i], msg.sender, amounts[i]);
             }
         }
 
         // Mint pool tokens
-        IPoolToken(token).mint(msg.sender, mintAmount);
+        rawCall(token, abi.encodeWithSignature("mint(address,uint256)", msg.sender, mintAmount));
 
         emit AddLiquidity(msg.sender, amounts, fees, D[1], tokenSupply + mintAmount);
 
@@ -174,12 +189,11 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256 dx,
         bool withoutFee
     ) internal view override returns (uint256) {
-        uint256[] memory xp = _balances(0);
-        uint256 x = xp[i] + dx;
-        uint256 y = getY(i, j, x, xp);
-        uint256 dy = xp[j] - y - 1;
-        uint256 _fee = ((withoutFee ? 0 : fee) * dy) / FEE_DENOMINATOR;
-        return dy - _fee;
+        uint256[] memory rates = new uint256[](N_COINS);
+        for (uint256 k = 0; k < rates.length; k++) {
+            rates[k] = PRECISION;
+        }
+        return StableSwapMath.calculateDy(rates, _balances(0), i, j, dx, _A(), (withoutFee ? 0 : fee));
     }
 
     // reference: https://github.com/curvefi/curve-contract/blob/c6df0cf14b557b11661a474d8d278affd849d3fe/contracts/pools/y/StableSwapY.vy#L351
@@ -188,11 +202,11 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256 j,
         uint256 dy
     ) internal view override returns (uint256) {
-        uint256[] memory xp = _balances(0);
-        uint256 y = xp[j] - ((dy * FEE_DENOMINATOR) / (FEE_DENOMINATOR - fee));
-        uint256 x = getY(j, i, y, xp);
-        uint256 dx = x - xp[i];
-        return dx;
+        uint256[] memory rates = new uint256[](N_COINS);
+        for (uint256 k = 0; k < rates.length; k++) {
+            rates[k] = PRECISION;
+        }
+        return StableSwapMath.calculateDx(rates, _balances(0), i, j, dy, _A(), fee);
     }
 
     function _getDyUnderlying(
@@ -219,7 +233,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256 dyFee = (dy * fee) / FEE_DENOMINATOR;
 
         dy = dy - dyFee;
-        require(dy >= minDy, "Exchange resulted in fewer coins than expected");
+        _checkSlippage(dy, minDy);
 
         uint256 _adminFee = adminFee;
         if (_adminFee != 0) {
@@ -231,20 +245,36 @@ abstract contract KlayPool is IKlayPool, StableSwap {
 
         if (i == 0) {
             require(msg.value == dx);
-            require(IKIP7(coins[j]).transfer(msg.sender, dy));
+            _pushToken(coins[j], msg.sender, dy);
         } else if (j == 0) {
             require(msg.value == 0);
-            require(IKIP7(coins[i]).transferFrom(msg.sender, address(this), dx));
+            _pullToken(coins[i], msg.sender, dx);
             rawCall(msg.sender, dy);
         } else {
             require(msg.value == 0);
-            require(IKIP7(coins[i]).transferFrom(msg.sender, address(this), dx));
-            require(IKIP7(coins[j]).transfer(msg.sender, dy));
+            _pullToken(coins[i], msg.sender, dx);
+            _pushToken(coins[j], msg.sender, dy);
         }
 
         emit TokenExchange(msg.sender, i, dx, j, dy, dyFee);
 
         return dy;
+    }
+
+    /// @notice Calculate estimated coins from the pool when remove by lp tokens
+    /// @dev Withdrawal amounts are based on current deposit ratios
+    /// @param _amount Quantity of LP tokens to burn in the withdrawal
+    /// @return List of amounts of coins that were withdrawn
+    function calcWithdraw(uint256 _amount) external view override returns (uint256[] memory) {
+        uint256 totalSupply = _lpTotalSupply();
+        uint256[] memory amounts = new uint256[](N_COINS);
+        uint256[] memory balances_ = _balances(0);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            amounts[i] = (balances_[i] * _amount) / totalSupply;
+        }
+
+        return amounts;
     }
 
     /// @notice Withdraw coins from the pool
@@ -254,18 +284,18 @@ abstract contract KlayPool is IKlayPool, StableSwap {
     /// @return List of amounts of coins that were withdrawn
     function removeLiquidity(uint256 _amount, uint256[] memory minAmounts) external nonReentrant returns (uint256[] memory) {
         uint256[] memory amounts = _balances(0);
-        uint256 totalSupply = IPoolToken(token).totalSupply();
-        IPoolToken(token).burn(msg.sender, _amount); // insufficient funds
+        uint256 totalSupply = _lpTotalSupply();
+        _burnLp(msg.sender, _amount);
 
         for (uint256 i = 0; i < N_COINS; i++) {
             uint256 value = (amounts[i] * _amount) / totalSupply;
-            require(value >= minAmounts[i], "Withdrawal resulted in fewer coins than expected");
+            _checkSlippage(value, minAmounts[i]);
 
             amounts[i] = value;
             if (i == 0) {
                 rawCall(msg.sender, value);
             } else {
-                require(IKIP7(coins[1]).transfer(msg.sender, value));
+                _pushToken(coins[1], msg.sender, value);
             }
         }
 
@@ -316,20 +346,20 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         }
         uint256 D2 = getD(newBalances, amp);
 
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         uint256 tokenAmount = ((D0 - D2) * tokenSupply) / D0;
 
         require(tokenAmount != 0); // dev: zero tokens burned
-        require(tokenAmount <= maxBurnAmount, "Slippage screwed you");
+        _checkSlippage(maxBurnAmount, tokenAmount);
 
-        IPoolToken(token).burn(msg.sender, tokenAmount); // dev: insufficient funds
+        _burnLp(msg.sender, tokenAmount);
 
         if (amounts[0] != 0) {
             rawCall(msg.sender, amounts[0]);
         }
         for (uint256 i = 1; i < N_COINS; i++) {
             if (amounts[i] != 0) {
-                IKIP7(coins[i]).transfer(msg.sender, amounts[i]);
+                _pushToken(coins[i], msg.sender, amounts[i]);
             }
         }
 
@@ -357,7 +387,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         uint256 amp = _A();
         uint256[] memory xp = _balances(0);
         uint256 D0 = getD(xp, amp);
-        uint256 totalSupply = IPoolToken(token).totalSupply();
+        uint256 totalSupply = _lpTotalSupply();
         uint256 D1 = D0 - (_tokenAmount * D0) / totalSupply;
         uint256 newY = getYD(amp, i, xp, D1);
 
@@ -411,16 +441,16 @@ abstract contract KlayPool is IKlayPool, StableSwap {
 
         (uint256 dy, uint256 dyFee, uint256 totalSupply) = _calcWithdrawOneCoin(_tokenAmount, i, false);
 
-        require(dy >= minAmount, "Not enough coins removed");
+        _checkSlippage(dy, minAmount);
 
         _storedBalances[i] += (dyFee * adminFee) / FEE_DENOMINATOR;
 
-        IPoolToken(token).burn(msg.sender, _tokenAmount); // dev: insufficient funds
+        _burnLp(msg.sender, _tokenAmount);
 
         if (i == 0) {
             rawCall(msg.sender, dy);
         } else {
-            IKIP7(coins[i]).transfer(msg.sender, dy);
+            _pushToken(coins[i], msg.sender, dy);
         }
         uint256[] memory amounts = new uint256[](N_COINS);
         uint256[] memory fees = new uint256[](N_COINS);
@@ -437,7 +467,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
     }
 
     function withdrawAdminFees(address recipient) external override onlyOperator nonReentrant {
-        require(recipient != address(0), "StableSwap::withdrawAdminFee: 0 address");
+        require(recipient != address(0), "StableSwap: 0 address");
 
         uint256[] memory _adminBalances = _storedBalances;
         if (_adminBalances[0] > 0) {
@@ -445,7 +475,7 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         }
         for (uint256 i = 1; i < N_COINS; i++) {
             if (_adminBalances[i] > 0) {
-                require(IKIP7(coins[i]).transfer(recipient, _adminBalances[i]));
+                _pushToken(coins[i], recipient, _adminBalances[i]);
             }
         }
         _clearAdminBalances();
@@ -459,5 +489,10 @@ abstract contract KlayPool is IKlayPool, StableSwap {
         for (uint256 i = 0; i < N_COINS; i++) {
             _storedBalances[i] = 0;
         }
+    }
+
+    function rawCall(address to, uint256 value) internal {
+        (bool success, ) = to.call{value: value}("");
+        require(success); // dev: failed transfer
     }
 }

@@ -1,0 +1,21 @@
+{
+  "extends": [
+    "plugin:prettier/recommended"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 2020,
+    "sourceType": "module"
+  },
+  "ignorePatterns": ["coverage/**"],
+  "rules": {
+    "prettier/prettier": "error"
+  },
+  "overrides": [
+    {
+      "files": ["*.test.js", "*.spec.js", "*.test.ts", "*.spec.ts"],
+      "rules": {
+        "no-unused-expressions": "warn"
+      }
+    }
+  ]
+}

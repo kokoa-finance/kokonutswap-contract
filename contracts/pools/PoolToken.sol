@@ -22,4 +22,12 @@ contract PoolToken is KIP7Extended, IPoolToken {
     ) internal initializer {
         __KIP7Extended_init(_name, _symbol, _decimals, _owner);
     }
+
+    function changeName(string memory name_) external onlyOwner {
+        _name = name_;
+    }
+
+    function changeSymbol(string memory symbol_) external onlyOwner {
+        _symbol = symbol_;
+    }
 }

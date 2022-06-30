@@ -9,6 +9,8 @@ interface II4ISwapPool {
 
     function coins(uint256 i) external view returns (address);
 
+    function getPrice(uint256 i, uint256 j) external view returns (uint256);
+
     function getVirtualPrice() external view returns (uint256);
 
     function A() external view returns (uint256);

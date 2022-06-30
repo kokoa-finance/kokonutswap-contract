@@ -2,8 +2,12 @@
 
 pragma solidity ^0.8.3;
 
-interface IDeposit {
+interface IExtended {
+    function pool() external view returns (address);
+
     function coinIndex(address coin) external view returns (uint256);
+
+    function getPrice(uint256 i, uint256 j) external view returns (uint256);
 
     function addLiquidity(uint256[] calldata amounts, uint256 minMintAmount) external returns (uint256);
 

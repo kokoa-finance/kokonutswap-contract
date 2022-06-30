@@ -26,6 +26,8 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
     uint256 public override totalSupply;
     mapping(address => uint256) public override balanceOf;
 
+    bytes32[50] private __storageBuffer;
+
     constructor(address ADDRESS_BOOK_) {
         ADDRESS_BOOK = IAddressBook(ADDRESS_BOOK_);
     }
@@ -53,7 +55,7 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
 
     function beneficiary() public view virtual returns (IBeneficiary);
 
-    function stake(address to, uint256 amount) external override whenNotPaused {
+    function stake(address to, uint256 amount) public virtual override whenNotPaused {
         release();
         rewardDebt[to] += SafeCast.toInt256(amount.wadMul(accRewardPerShare));
 
@@ -64,9 +66,9 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
         emit Stake(msg.sender, to, amount);
     }
 
-    function unstake(address to, uint256 amount) public override whenNotPaused {
+    function unstake(address to, uint256 amount) external override whenNotPaused {
         release();
-        rewardDebt[to] -= SafeCast.toInt256(amount.wadMul(accRewardPerShare));
+        rewardDebt[msg.sender] -= SafeCast.toInt256(amount.wadMul(accRewardPerShare));
 
         _token.transfer(to, amount);
         balanceOf[msg.sender] = balanceOf[msg.sender] - amount;
@@ -77,8 +79,9 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
 
     function release() public whenNotPaused {
         if (totalSupply > 0) {
-            beneficiary().claimToken(address(this));
-            (, uint256 accClaimedToken, , ) = beneficiary().accountInfo(address(this));
+            IBeneficiary _beneficiary = beneficiary();
+            _beneficiary.claimToken(address(this));
+            (, uint256 accClaimedToken, , ) = _beneficiary.accountInfo(address(this));
             uint256 reward = accClaimedToken - lastAccClaimedAmountFromVesting;
             lastAccClaimedAmountFromVesting = accClaimedToken;
             accRewardPerShare = accRewardPerShare + ((reward * WadRayMath.WAD) / totalSupply);
@@ -86,29 +89,35 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
         }
     }
 
-    function claimableReward(address usr) public view override whenNotPaused returns (uint256 claimable) {
+    function claimableReward(address usr) external view override returns (uint256 claimable) {
         uint256 _accRewardPerShare = accRewardPerShare;
         if (totalSupply > 0) {
-            uint256 claimableToken = beneficiary().claimableToken(address(this));
-            (, uint256 accClaimedToken, , ) = beneficiary().accountInfo(address(this));
+            IBeneficiary _beneficiary = beneficiary();
+            uint256 claimableToken = _beneficiary.claimableToken(address(this));
+            (, uint256 accClaimedToken, , ) = _beneficiary.accountInfo(address(this));
             uint256 reward = accClaimedToken + claimableToken - lastAccClaimedAmountFromVesting;
-            _accRewardPerShare = accRewardPerShare + ((reward * WadRayMath.WAD) / totalSupply);
+            _accRewardPerShare = _accRewardPerShare + ((reward * WadRayMath.WAD) / totalSupply);
         }
         claimable = SafeCast.toUint256(SafeCast.toInt256(balanceOf[usr].wadMul(_accRewardPerShare)) - rewardDebt[usr]);
     }
 
-    function claimReward(address usr) public override whenNotPaused {
+    function _claimReward(address usr) internal returns (uint256 amount) {
         release();
 
         int256 accumulatedReward = SafeCast.toInt256(balanceOf[usr].wadMul(accRewardPerShare));
-        uint256 amount = SafeCast.toUint256(accumulatedReward - rewardDebt[usr]);
+        amount = SafeCast.toUint256(accumulatedReward - rewardDebt[usr]);
+
+        rewardDebt[usr] = accumulatedReward;
+    }
+
+    // @deprecated
+    function claimReward(address usr) external override whenNotPaused {
+        uint256 amount = _claimReward(usr);
         if (amount == 0) {
             return;
         }
 
-        rewardDebt[usr] = accumulatedReward;
-
-        IKIP7 rewardToken = IKIP7(ADDRESS_BOOK.getAddress(bytes32("EYE")));
+        IKIP7 rewardToken = _getKokos();
         IStakedToken stakedRewardToken = IStakedToken(ADDRESS_BOOK.getAddress(bytes32("SEYE")));
 
         rewardToken.approve(address(stakedRewardToken), amount);
@@ -116,7 +125,23 @@ abstract contract TokenStakingPool is Pausable, IStakingPool {
         emit ClaimReward(usr, amount);
     }
 
+    function claimUnstakedReward(address usr) external override whenNotPaused {
+        uint256 amount = _claimReward(usr);
+        if (amount == 0) {
+            return;
+        }
+
+        IKIP7 rewardToken = _getKokos();
+
+        rewardToken.transfer(usr, amount);
+        emit ClaimReward(usr, amount);
+    }
+
     function token() external view override returns (address) {
         return address(_token);
+    }
+
+    function _getKokos() internal view returns (IKIP7) {
+        return IKIP7(ADDRESS_BOOK.getAddress(bytes32("EYE")));
     }
 }

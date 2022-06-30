@@ -38,17 +38,28 @@ abstract contract BasePool is IBasePool, StableSwap {
         __StableSwap_init(_coins, _PRECISION_MUL, _RATES, _poolToken, _initialA, _fee, _adminFee);
     }
 
-    function balances(uint256 i) public view override(II4ISwapPool, StableSwap) returns (uint256) {
+    function balances(uint256 i) external view override returns (uint256) {
         return _storedBalances[i];
+    }
+
+    function adminBalances(uint256 i) external view override returns (uint256) {
+        return _getThisTokenBalance(coins[i]) - _storedBalances[i];
+    }
+
+    function adminBalanceList() external view override returns (uint256[] memory balances_) {
+        balances_ = new uint256[](N_COINS);
+        for (uint256 i = 0; i < N_COINS; i++) {
+            balances_[i] = _getThisTokenBalance(coins[i]) - _storedBalances[i];
+        }
+    }
+
+    function balanceList() external view override returns (uint256[] memory) {
+        return _storedBalances;
     }
 
     // 10**18 precision
     function _xp() internal view returns (uint256[] memory) {
-        uint256[] memory result = new uint256[](N_COINS);
-        for (uint256 i = 0; i < N_COINS; i++) {
-            result[i] = (RATES[i] * _storedBalances[i]) / PRECISION;
-        }
-        return result;
+        return _xpMem(_storedBalances);
     }
 
     // 10**18 precision
@@ -64,6 +75,14 @@ abstract contract BasePool is IBasePool, StableSwap {
         return getD(_xpMem(_balances), amp);
     }
 
+    function getPrice(uint256 i, uint256 j) external view override returns (uint256) {
+        return StableSwapMath.calculatePrice(i, j, _xp(), _A());
+    }
+
+    function getLpPrice(uint256 i) external view override returns (uint256) {
+        return StableSwapMath.calculateLpPrice(i, _xp(), _A(), _lpTotalSupply());
+    }
+
     function getVirtualPrice() external view override returns (uint256) {
         /*
         Returns portfolio virtual price (for calculating profit)
@@ -72,7 +91,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         uint256 D = getD(_xp(), _A());
         // D is in the units similar to DAI (e.g. converted to precision 1e18)
         // When balanced, D = n * x_u - total virtual value of the portfolio
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         return (D * PRECISION) / tokenSupply;
     }
 
@@ -102,7 +121,7 @@ abstract contract BasePool is IBasePool, StableSwap {
             }
         }
         uint256 D1 = getDMem(_balances, amp);
-        uint256 tokenAmount = IPoolToken(token).totalSupply();
+        uint256 tokenAmount = _lpTotalSupply();
         uint256 diff = 0;
         if (deposit) {
             diff = D1 - D0;
@@ -116,7 +135,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         require(msg.value == 0);
         uint256 amp = _A();
 
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         // Initial invariant
         uint256 D0 = 0;
         uint256[] memory oldBalances = _storedBalances;
@@ -130,12 +149,12 @@ abstract contract BasePool is IBasePool, StableSwap {
             if (tokenSupply == 0) {
                 require(inAmount > 0); // dev: initial deposit requires all coins
             }
-            address in_coin = coins[i];
+            address inCoin = coins[i];
 
             // Take coins from the sender
             if (inAmount > 0) {
                 // "safeTransferFrom" which works for KIP7s which return bool or not
-                rawCall(in_coin, abi.encodeWithSignature("transferFrom(address,address,uint256)", msg.sender, address(this), amounts[i]));
+                _pullToken(inCoin, msg.sender, amounts[i]);
             }
 
             newBalances[i] = oldBalances[i] + inAmount;
@@ -178,10 +197,10 @@ abstract contract BasePool is IBasePool, StableSwap {
             mintAmount = (tokenSupply * (D2 - D0)) / D0;
         }
 
-        require(mintAmount >= minMintAmount, "Slippage screwed you");
+        _checkSlippage(mintAmount, minMintAmount);
 
         // Mint pool tokens
-        IPoolToken(token).mint(msg.sender, mintAmount);
+        rawCall(token, abi.encodeWithSignature("mint(address,uint256)", msg.sender, mintAmount));
 
         emit AddLiquidity(msg.sender, amounts, fees, D1, tokenSupply + mintAmount);
 
@@ -194,14 +213,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         uint256 dx,
         bool withoutFee
     ) internal view override returns (uint256) {
-        // dx and dy in c-units
-        uint256[] memory xp = _xp();
-
-        uint256 x = xp[i] + ((dx * RATES[i]) / PRECISION);
-        uint256 y = getY(i, j, x, xp);
-        uint256 dy = ((xp[j] - y - 1) * PRECISION) / RATES[j];
-        uint256 _fee = ((withoutFee ? 0 : fee) * dy) / FEE_DENOMINATOR;
-        return dy - _fee;
+        return StableSwapMath.calculateDy(RATES, _xp(), i, j, dx, _A(), (withoutFee ? 0 : fee));
     }
 
     // reference: https://github.com/curvefi/curve-contract/blob/c6df0cf14b557b11661a474d8d278affd849d3fe/contracts/pools/y/StableSwapY.vy#L351
@@ -210,11 +222,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         uint256 j,
         uint256 dy
     ) internal view override returns (uint256) {
-        uint256[] memory xp = _xp();
-        uint256 y = xp[j] - (((dy * FEE_DENOMINATOR) / (FEE_DENOMINATOR - fee)) * RATES[j]) / PRECISION;
-        uint256 x = getY(j, i, y, xp);
-        uint256 dx = ((x - xp[i]) * PRECISION) / RATES[i];
-        return dx;
+        return StableSwapMath.calculateDx(RATES, _xp(), i, j, dy, _A(), fee);
     }
 
     function _getDyUnderlying(
@@ -246,7 +254,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         address inputCoin = coins[i];
 
         // "safeTransferFrom" which works for KIP7s which return bool or not
-        rawCall(inputCoin, abi.encodeWithSignature("transferFrom(address,address,uint256)", msg.sender, address(this), dx));
+        _pullToken(inputCoin, msg.sender, dx);
 
         uint256 x = xp[i] + (dx * RATES[i]) / PRECISION;
         uint256 y = getY(i, j, x, xp);
@@ -256,7 +264,7 @@ abstract contract BasePool is IBasePool, StableSwap {
 
         // Convert all to real units
         dy = ((dy - dyFee) * PRECISION) / RATES[j];
-        require(dy >= minDy, "Exchange resulted in fewer coins than expected");
+        _checkSlippage(dy, minDy);
 
         uint256 dyAdminFee = (dyFee * adminFee) / FEE_DENOMINATOR;
         dyAdminFee = (dyAdminFee * PRECISION) / RATES[j];
@@ -267,11 +275,26 @@ abstract contract BasePool is IBasePool, StableSwap {
         _storedBalances[j] = oldBalances[j] - dy - dyAdminFee;
 
         // "safeTransfer" which works for KIP7s which return bool or not
-        rawCall(coins[j], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, dy));
+        _pushToken(coins[j], msg.sender, dy);
 
         emit TokenExchange(msg.sender, i, dx, j, dy, dyFee);
 
         return dy;
+    }
+
+    /// @notice Calculate estimated coins from the pool when remove by lp tokens
+    /// @dev Withdrawal amounts are based on current deposit ratios
+    /// @param _amount Quantity of LP tokens to burn in the withdrawal
+    /// @return List of amounts of coins that were withdrawn
+    function calcWithdraw(uint256 _amount) external view override returns (uint256[] memory) {
+        uint256 totalSupply = _lpTotalSupply();
+        uint256[] memory amounts = new uint256[](N_COINS);
+
+        for (uint256 i = 0; i < N_COINS; i++) {
+            amounts[i] = (_storedBalances[i] * _amount) / totalSupply;
+        }
+
+        return amounts;
     }
 
     /// @notice Withdraw coins from the pool
@@ -280,21 +303,21 @@ abstract contract BasePool is IBasePool, StableSwap {
     /// @param minAmounts Minimum amounts of underlying coins to receive
     /// @return List of amounts of coins that were withdrawn
     function removeLiquidity(uint256 _amount, uint256[] memory minAmounts) external override nonReentrant returns (uint256[] memory) {
-        uint256 totalSupply = IPoolToken(token).totalSupply();
+        uint256 totalSupply = _lpTotalSupply();
         uint256[] memory amounts = new uint256[](N_COINS);
         uint256[] memory fees = new uint256[](N_COINS); // Fees are unused but we've got them historically in event
 
         for (uint256 i = 0; i < N_COINS; i++) {
             uint256 value = (_storedBalances[i] * _amount) / totalSupply;
-            require(value >= minAmounts[i], "Withdrawal resulted in fewer coins than expected");
+            _checkSlippage(value, minAmounts[i]);
             _storedBalances[i] -= value;
             amounts[i] = value;
 
             // "safeTransfer" which works for KIP7s which return bool or not
-            rawCall(coins[i], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, value));
+            _pushToken(coins[i], msg.sender, value);
         }
 
-        IPoolToken(token).burn(msg.sender, _amount); // dev: insufficient funds
+        _burnLp(msg.sender, _amount);
 
         emit RemoveLiquidity(msg.sender, amounts, fees, totalSupply - _amount);
 
@@ -308,7 +331,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         whenNotPaused
         returns (uint256)
     {
-        uint256 tokenSupply = IPoolToken(token).totalSupply();
+        uint256 tokenSupply = _lpTotalSupply();
         require(tokenSupply != 0); // dev: zero total supply
         uint256 amp = _A();
 
@@ -341,13 +364,13 @@ abstract contract BasePool is IBasePool, StableSwap {
         uint256 tokenAmount = ((D0 - D2) * tokenSupply) / D0;
         require(tokenAmount != 0); // dev: zero tokens burned
         tokenAmount += 1; // In case of rounding errors - make it unfavorable for the "attacker"
-        require(tokenAmount <= maxBurnAmount, "Slippage screwed you");
+        _checkSlippage(maxBurnAmount, tokenAmount);
 
-        IPoolToken(token).burn(msg.sender, tokenAmount); // dev: insufficient funds
+        _burnLp(msg.sender, tokenAmount);
         for (uint256 i = 0; i < N_COINS; i++) {
             if (amounts[i] != 0) {
                 // "safeTransfer" which works for KIP7s which return bool or not
-                rawCall(coins[i], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, amounts[i]));
+                _pushToken(coins[i], msg.sender, amounts[i]);
             }
         }
         emit RemoveLiquidityImbalance(msg.sender, amounts, fees, D1, tokenSupply - tokenAmount);
@@ -372,7 +395,7 @@ abstract contract BasePool is IBasePool, StableSwap {
         // * Get current D
         // * Solve Eqn against y_i for D - _tokenAmount
         uint256 amp = _A();
-        uint256 totalSupply = IPoolToken(token).totalSupply();
+        uint256 totalSupply = _lpTotalSupply();
 
         uint256[] memory xp = _xp();
 
@@ -421,13 +444,13 @@ abstract contract BasePool is IBasePool, StableSwap {
         */
 
         (uint256 dy, uint256 dyFee, uint256 totalSupply) = _calcWithdrawOneCoin(_tokenAmount, i, false);
-        require(dy >= minAmount, "Not enough coins removed");
+        _checkSlippage(dy, minAmount);
 
         _storedBalances[i] -= (dy + (dyFee * adminFee) / FEE_DENOMINATOR);
-        IPoolToken(token).burn(msg.sender, _tokenAmount); // dev: insufficient funds
+        _burnLp(msg.sender, _tokenAmount);
 
         // "safeTransfer" which works for KIP7s which return bool or not
-        rawCall(coins[i], abi.encodeWithSignature("transfer(address,uint256)", msg.sender, dy));
+        _pushToken(coins[i], msg.sender, dy);
         uint256[] memory amounts = new uint256[](N_COINS);
         uint256[] memory fees = new uint256[](N_COINS);
         amounts[i] = dy;
@@ -442,25 +465,21 @@ abstract contract BasePool is IBasePool, StableSwap {
         super.transferOwnership(newOwner);
     }
 
-    function adminBalances(uint256 i) public view override(IStableSwap, StableSwap) returns (uint256) {
-        return IKIP7(coins[i]).balanceOf(address(this)) - _storedBalances[i];
-    }
-
     function withdrawAdminFees(address recipient) external override onlyOperator {
-        require(recipient != address(0), "StableSwap::withdrawAdminFee: 0 address");
+        require(recipient != address(0), "StableSwap: 0 address");
         for (uint256 i = 0; i < N_COINS; i++) {
             address c = coins[i];
-            uint256 value = IKIP7(c).balanceOf(address(this)) - _storedBalances[i];
+            uint256 value = _getThisTokenBalance(c) - _storedBalances[i];
             if (value > 0) {
                 // "safeTransfer" which works for KIP7s which return bool or not
-                rawCall(c, abi.encodeWithSignature("transfer(address,uint256)", recipient, value));
+                _pushToken(c, recipient, value);
             }
         }
     }
 
     function donateAdminFees() external override onlyOwner {
         for (uint256 i = 0; i < N_COINS; i++) {
-            _storedBalances[i] = IKIP7(coins[i]).balanceOf(address(this));
+            _storedBalances[i] = _getThisTokenBalance(coins[i]);
         }
     }
 }
